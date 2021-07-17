@@ -1,6 +1,6 @@
-require 'spec_helper'
-require_dependency 'jobs/base'
-require_dependency 'jobs/regular/process_post'
+# frozen_string_literal: true
+
+require 'rails_helper'
 
 describe Jobs::NotifyMovedPosts do
 
@@ -9,15 +9,14 @@ describe Jobs::NotifyMovedPosts do
   end
 
   it "raises an error without moved_by_id" do
-    expect { Jobs::NotifyMovedPosts.new.execute(post_ids: [1,2,3]) }.to raise_error(Discourse::InvalidParameters)
+    expect { Jobs::NotifyMovedPosts.new.execute(post_ids: [1, 2, 3]) }.to raise_error(Discourse::InvalidParameters)
   end
 
-
   context 'with post ids' do
-    let!(:p1) { Fabricate(:post) }
-    let!(:p2) { Fabricate(:post, user: Fabricate(:evil_trout), topic: p1.topic) }
-    let!(:p3) { Fabricate(:post, user: p1.user, topic: p1.topic) }
-    let(:admin) { Fabricate(:admin) }
+    fab!(:p1) { Fabricate(:post) }
+    fab!(:p2) { Fabricate(:post, user: Fabricate(:evil_trout), topic: p1.topic) }
+    fab!(:p3) { Fabricate(:post, user: p1.user, topic: p1.topic) }
+    fab!(:admin) { Fabricate(:admin) }
 
     let(:moved_post_notifications) { Notification.where(notification_type: Notification.types[:moved_post]) }
 
@@ -32,6 +31,5 @@ describe Jobs::NotifyMovedPosts do
     end
 
   end
-
 
 end

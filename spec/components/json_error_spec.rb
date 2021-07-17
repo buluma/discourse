@@ -1,5 +1,6 @@
-require 'spec_helper'
-require_dependency 'json_error'
+# frozen_string_literal: true
+
+require 'rails_helper'
 
 shared_examples "a generic error" do
   let(:result) { creator.create_errors_json(obj) }
@@ -37,11 +38,11 @@ describe JsonError do
 
   describe "with a string" do
     it "returns the string in the error format" do
-      expect(creator.create_errors_json("test error")).to eq({errors: ["test error"]})
+      expect(creator.create_errors_json("test error")).to eq(errors: ["test error"])
     end
   end
 
-  describe "an activerecord objec with errors" do
+  describe "an activerecord object with errors" do
     let(:invalid_user) { User.new }
     it "returns the errors correctly" do
       expect(invalid_user).not_to be_valid
@@ -52,4 +53,3 @@ describe JsonError do
   end
 
 end
-

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Autospec; end
 
 class Autospec::ReloadCss
@@ -12,6 +14,7 @@ class Autospec::ReloadCss
   watch(/\.ca?ss\.erb$/)
   watch(/\.s[ac]ss$/)
   watch(/\.hbs$/)
+  watch(/\.hbr$/)
 
   def self.message_bus
     MessageBus::Instance.new.tap do |bus|
@@ -30,7 +33,6 @@ class Autospec::ReloadCss
       [:desktop, :mobile].each do |style|
         s = DiscourseStylesheets.new(style)
         s.compile
-        s.ensure_digestless_file
         paths << "public" + s.stylesheet_relpath_no_digest
       end
       ActiveRecord::Base.clear_active_connections!

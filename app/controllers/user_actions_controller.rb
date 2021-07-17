@@ -1,30 +1,44 @@
+# frozen_string_literal: true
+
 class UserActionsController < ApplicationController
 
   def index
     params.require(:username)
-    params.permit(:filter, :offset)
+    params.permit(:filter, :offset, :acting_username, :limit)
 
-    per_chunk = 60
+    user = fetch_user_from_params(include_inactive: current_user.try(:staff?) || (current_user && SiteSetting.show_inactive_accounts))
+    raise Discourse::NotFound unless guardian.can_see_profile?(user)
 
-    user = fetch_user_from_params
+    offset = [0, params[:offset].to_i].max
+    action_types = (params[:filter] || "").split(",").map(&:to_i)
+    limit = params.fetch(:limit, 30).to_i
 
-    opts = { user_id: user.id,
-             user: user,
-             offset: params[:offset].to_i,
-             limit: per_chunk,
-             action_types: (params[:filter] || "").split(",").map(&:to_i),
-             guardian: guardian,
-             ignore_private_messages: params[:filter] ? false : true }
+    opts = {
+      user_id: user.id,
+      user: user,
+      offset: offset,
+      limit: limit,
+      action_types: action_types,
+      guardian: guardian,
+      ignore_private_messages: params[:filter] ? false : true,
+      acting_username: params[:acting_username]
+    }
 
-    # Pending is restricted
-    stream = if opts[:action_types].include?(UserAction::PENDING)
-      guardian.ensure_can_see_notifications!(user)
-      UserAction.stream_queued(opts)
+    stream = UserAction.stream(opts).to_a
+    if stream.empty? && (help_key = params['no_results_help_key'])
+      if user.id == guardian.user.try(:id)
+        help_key += ".self"
+      else
+        help_key += ".others"
+      end
+      render json: {
+        user_action: [],
+        no_results_help: I18n.t(help_key)
+      }
     else
-      UserAction.stream(opts)
+      render_serialized(stream, UserActionSerializer, root: 'user_actions')
     end
 
-    render_serialized(stream, UserActionSerializer, root: "user_actions")
   end
 
   def show
@@ -34,6 +48,7 @@ class UserActionsController < ApplicationController
 
   def private_messages
     # DO NOT REMOVE
+    # TODO should preload messages to avoid extra http req
   end
 
 end

@@ -1,4 +1,6 @@
-require 'spec_helper'
+# frozen_string_literal: true
+
+require 'rails_helper'
 
 describe ScreenedEmail do
 
@@ -24,6 +26,7 @@ describe ScreenedEmail do
 
   describe '#block' do
     context 'email is not being blocked' do
+
       it 'creates a new record with default action of :block' do
         record = ScreenedEmail.block(email)
         expect(record).not_to be_new_record
@@ -55,6 +58,14 @@ describe ScreenedEmail do
   describe '#should_block?' do
     subject { ScreenedEmail.should_block?(email) }
 
+    it "automatically blocks via email canonicalization" do
+      SiteSetting.levenshtein_distance_spammer_emails = 0
+      ScreenedEmail.block('bad.acTor+1@gmail.com')
+      ScreenedEmail.block('bad.actOr+2@gmail.com')
+
+      expect(ScreenedEmail.should_block?('b.a.dactor@gmail.com')).to eq(true)
+    end
+
     it "returns false if a record with the email doesn't exist" do
       expect(subject).to eq(false)
     end
@@ -78,9 +89,9 @@ describe ScreenedEmail do
 
     shared_examples "when a ScreenedEmail record matches" do
       it "updates statistics" do
-        Timecop.freeze(Time.zone.now) do
+        freeze_time do
           expect { subject }.to change { screened_email.reload.match_count }.by(1)
-          expect(screened_email.last_match_at).to be_within_one_second_of(Time.zone.now)
+          expect(screened_email.last_match_at).to eq_time(Time.zone.now)
         end
       end
     end

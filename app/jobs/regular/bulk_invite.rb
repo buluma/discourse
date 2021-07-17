@@ -1,114 +1,165 @@
-require 'csv'
-require_dependency 'system_message'
+# frozen_string_literal: true
 
 module Jobs
-
-  class BulkInvite < Jobs::Base
+  class BulkInvite < ::Jobs::Base
     sidekiq_options retry: false
-    attr_accessor :current_user
 
     def initialize
-      @logs    = []
-      @sent    = 0
-      @failed  = 0
+      super
+
+      @logs         = []
+      @sent         = 0
+      @failed       = 0
+      @groups       = {}
+      @user_fields  = {}
+      @valid_groups = {}
     end
 
     def execute(args)
-      filename     = args[:filename]
-      identifier   = args[:identifier]
-      chunks       = args[:chunks].to_i
+      @invites = args[:invites]
+      raise Discourse::InvalidParameters.new(:invites) if @invites.blank?
+
       @current_user = User.find_by(id: args[:current_user_id])
+      raise Discourse::InvalidParameters.new(:current_user_id) unless @current_user
 
-      raise Discourse::InvalidParameters.new(:filename)   if filename.blank?
-      raise Discourse::InvalidParameters.new(:identifier) if identifier.blank?
-      raise Discourse::InvalidParameters.new(:chunks)     if chunks <= 0
+      @guardian = Guardian.new(@current_user)
 
-      # merge chunks, and get csv path
-      csv_path = get_csv_path(filename, identifier, chunks)
+      process_invites(@invites)
 
-      # read csv file, and send out invitations
-      read_csv_file(csv_path)
-
-      # send notification to user regarding progress
+      if @invites.length > Invite::BULK_INVITE_EMAIL_LIMIT
+        ::Jobs.enqueue(:process_bulk_invite_emails)
+      end
+    ensure
       notify_user
-
-      # since emails have already been sent out, delete the uploaded csv file
-      FileUtils.rm_rf(csv_path) rescue nil
     end
 
-    def get_csv_path(filename, identifier, chunks)
-      csv_path = "#{Invite.base_directory}/#{filename}"
-      tmp_csv_path = "#{csv_path}.tmp"
-      # path to tmp directory
-      tmp_directory = File.dirname(Invite.chunk_path(identifier, filename, 0))
-      # merge all chunks
-      HandleChunkUpload.merge_chunks(chunks, upload_path: csv_path, tmp_upload_path: tmp_csv_path, model: Invite, identifier: identifier, filename: filename, tmp_directory: tmp_directory)
+    private
 
-      return csv_path
-    end
-
-    def read_csv_file(csv_path)
-      CSV.foreach(csv_path) do |csv_info|
-        if csv_info[0]
-          if (EmailValidator.email_regex =~ csv_info[0])
-            # email is valid
-            send_invite(csv_info, $INPUT_LINE_NUMBER)
-            @sent += 1
-          else
-            # invalid email
-            log "Invalid Email '#{csv_info[0]}' at line number '#{$INPUT_LINE_NUMBER}'"
-            @failed += 1
-          end
+    def process_invites(invites)
+      invites.each do |invite|
+        if (EmailValidator.email_regex =~ invite[:email])
+          # email is valid
+          send_invite(invite)
+          @sent += 1
+        else
+          # invalid email
+          save_log "Invalid Email '#{invite[:email]}"
+          @failed += 1
         end
       end
+    rescue Exception => e
+      save_log "Bulk Invite Process Failed -- '#{e.message}'"
+      @failed += 1
     end
 
-    def get_group_ids(group_names, csv_line_number)
-      group_ids = []
+    def get_groups(group_names)
+      groups = []
+
       if group_names
         group_names = group_names.split(';')
+
         group_names.each { |group_name|
-          group_detail = Group.find_by_name(group_name)
-          if group_detail
+          group = fetch_group(group_name)
+
+          if group && can_edit_group?(group)
             # valid group
-            group_ids.push(group_detail.id)
+            groups.push(group)
           else
             # invalid group
-            log "Invalid Group '#{group_name}' at line number '#{csv_line_number}'"
+            save_log "Invalid Group '#{group_name}'"
             @failed += 1
           end
         }
       end
-      return group_ids
+
+      groups
     end
 
-    def get_topic(topic_id, csv_line_number)
+    def get_topic(topic_id)
       topic = nil
+
       if topic_id
         topic = Topic.find_by_id(topic_id)
         if topic.nil?
-          log "Invalid Topic ID '#{topic_id}' at line number '#{csv_line_number}'"
+          save_log "Invalid Topic ID '#{topic_id}'"
           @failed += 1
         end
       end
-      return topic
+
+      topic
     end
 
-    def send_invite(csv_info, csv_line_number)
-      email = csv_info[0]
-      group_ids = get_group_ids(csv_info[1], csv_line_number)
-      topic = get_topic(csv_info[2], csv_line_number)
+    def get_user_fields(fields)
+      user_fields = {}
+
+      fields.each do |key, value|
+        @user_fields[key] ||= UserField.includes(:user_field_options).where('name ILIKE ?', key).first || :nil
+        next if @user_fields[key] == :nil
+
+        # Automatically correct user field value
+        if @user_fields[key].field_type == "dropdown"
+          value = @user_fields[key].user_field_options.find { |ufo| ufo.value.casecmp?(value) }&.value
+        end
+
+        user_fields[@user_fields[key].id] = value
+      end
+
+      user_fields
+    end
+
+    def send_invite(invite)
+      email = invite[:email]
+      groups = get_groups(invite[:groups])
+      topic = get_topic(invite[:topic_id])
+      user_fields = get_user_fields(invite.except(:email, :groups, :topic_id))
+
       begin
-        Invite.invite_by_email(email, @current_user, topic, group_ids)
+        if user = Invite.find_user_by_email(email)
+          if groups.present?
+            Group.transaction do
+              groups.each do |group|
+                group.add(user)
+
+                GroupActionLogger
+                  .new(@current_user, group)
+                  .log_add_user_to_group(user)
+              end
+            end
+          end
+
+          if user_fields.present?
+            user_fields.each do |user_field, value|
+              user.set_user_field(user_field, value)
+            end
+            user.save_custom_fields
+          end
+        else
+          if user_fields.present?
+            user = User.where(staged: true).find_by_email(email)
+            user ||= User.new(username: UserNameSuggester.suggest(email), email: email, staged: true)
+            user_fields.each do |user_field, value|
+              user.set_user_field(user_field, value)
+            end
+            user.save!
+          end
+
+          invite_opts = {
+            email: email,
+            topic: topic,
+            group_ids: groups.map(&:id),
+          }
+
+          if @invites.length > Invite::BULK_INVITE_EMAIL_LIMIT
+            invite_opts[:emailed_status] = Invite.emailed_status_types[:bulk_pending]
+          end
+
+          Invite.generate(@current_user, invite_opts)
+        end
       rescue => e
-        log "Error inviting '#{email}' -- #{e}"
+        save_log "Error inviting '#{email}' -- #{Rails::Html::FullSanitizer.new.sanitize(e.message)}"
         @sent -= 1
         @failed += 1
       end
-    end
-
-    def log(message)
-      save_log(message)
     end
 
     def save_log(message)
@@ -118,13 +169,45 @@ module Jobs
     def notify_user
       if @current_user
         if (@sent > 0 && @failed == 0)
-          SystemMessage.create_from_system_user(@current_user, :bulk_invite_succeeded, sent: @sent)
+          SystemMessage.create_from_system_user(
+            @current_user,
+            :bulk_invite_succeeded,
+            sent: @sent
+          )
         else
-          SystemMessage.create_from_system_user(@current_user, :bulk_invite_failed, sent: @sent, failed: @failed, logs: @logs.join("\n"))
+          SystemMessage.create_from_system_user(
+            @current_user,
+            :bulk_invite_failed,
+            sent: @sent,
+            failed: @failed,
+            logs: @logs.join("\n")
+          )
         end
       end
     end
 
-  end
+    def fetch_group(group_name)
+      group_name = group_name.downcase
+      group = @groups[group_name]
 
+      unless group
+        group = Group.find_by('lower(name) = ?', group_name)
+        @groups[group_name] = group
+      end
+
+      group
+    end
+
+    def can_edit_group?(group)
+      group_name = group.name.downcase
+      result = @valid_groups[group_name]
+
+      unless result
+        result = @guardian.can_edit_group?(group)
+        @valid_groups[group_name] = result
+      end
+
+      result
+    end
+  end
 end

@@ -1,54 +1,75 @@
+# frozen_string_literal: true
+
 class RandomTopicSelector
 
   BACKFILL_SIZE = 3000
   BACKFILL_LOW_WATER_MARK = 500
 
-  def self.backfill(category=nil)
-
-    exclude = category.try(:topic_id)
-
-    # don't leak private categories into the "everything" group
-    user = category ? CategoryFeaturedTopic.fake_admin : nil
+  def self.backfill(category = nil)
+    exclude = category&.topic_id
 
     options = {
-      per_page: SiteSetting.category_featured_topics,
+      per_page: category ? category.num_featured_topics : 3,
       visible: true,
       no_definitions: true
     }
 
     options[:except_topic_ids] = [category.topic_id] if exclude
-    options[:category] = category.id if category
 
-    query = TopicQuery.new(user, options)
+    if category
+      options[:category] = category.id
+      # NOTE: at the moment this site setting scopes tightly to a category (excluding subcats)
+      # this is done so we don't populate a junk cache
+      if SiteSetting.limit_suggested_to_category
+        options[:no_subcategories] = true
+      end
+
+      # don't leak private categories into the "everything" group
+      options[:guardian] = Guardian.new(Discourse.system_user)
+    end
+
+    query = TopicQuery.new(nil, options)
+
     results = query.latest_results.order('RANDOM()')
-                   .where(closed: false, archived: false)
-                   .limit(BACKFILL_SIZE)
-                   .reorder('RANDOM()')
-                   .pluck(:id)
+      .where(closed: false, archived: false)
+      .where("topics.created_at > ?", SiteSetting.suggested_topics_max_days_old.days.ago)
+      .limit(BACKFILL_SIZE)
+      .reorder('RANDOM()')
+      .pluck(:id)
 
     key = cache_key(category)
-    results.each do |id|
-      $redis.rpush(key, id)
+
+    if results.present?
+      Discourse.redis.multi do
+        Discourse.redis.rpush(key, results)
+        Discourse.redis.expire(key, 2.days)
+      end
     end
-    $redis.expire(key, 2.days)
 
     results
   end
 
-  def self.next(count, category=nil)
+  def self.next(count, category = nil)
     key = cache_key(category)
 
     results = []
 
-    left = count
+    return results if count < 1
 
-    while left > 0
-      id = $redis.lpop key
-      break unless id
-
-      results << id.to_i
-      left -= 1
+    results = Discourse.redis.multi do
+      Discourse.redis.lrange(key, 0, count - 1)
+      Discourse.redis.ltrim(key, count, -1)
     end
+
+    if !results.is_a?(Array) # Redis is in readonly mode
+      results = Discourse.redis.lrange(key, 0, count - 1)
+    else
+      results = results[0]
+    end
+
+    results.map!(&:to_i)
+
+    left = count - results.length
 
     backfilled = false
     if left > 0
@@ -59,7 +80,7 @@ class RandomTopicSelector
       results = results[0...count]
     end
 
-    if !backfilled && $redis.llen(key) < BACKFILL_LOW_WATER_MARK
+    if !backfilled && Discourse.redis.llen(key) < BACKFILL_LOW_WATER_MARK
       Scheduler::Defer.later("backfill") do
         backfill(category)
       end
@@ -68,12 +89,12 @@ class RandomTopicSelector
     results
   end
 
-  def self.clear_cache!
-    $redis.keys('random_topic_cache*').each{|k| $redis.del k}
+  def self.cache_key(category = nil)
+    "random_topic_cache_#{category&.id}"
   end
 
-  def self.cache_key(category=nil)
-    "random_topic_cache_#{category.try(:id)}"
+  def self.clear_cache!
+    Discourse.redis.delete_prefixed(cache_key)
   end
 
 end

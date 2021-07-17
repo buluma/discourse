@@ -1,5 +1,6 @@
-require "spec_helper"
-require_dependency "import/normalize"
+# frozen_string_literal: true
+
+require "rails_helper"
 
 describe Import::Normalize do
   describe "#normalize_code_blocks" do
@@ -18,4 +19,3 @@ MD
     end
   end
 end
-

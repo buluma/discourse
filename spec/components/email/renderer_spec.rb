@@ -1,4 +1,6 @@
-require 'spec_helper'
+# frozen_string_literal: true
+
+require 'rails_helper'
 require 'email/renderer'
 
 describe Email::Renderer do
@@ -24,6 +26,3 @@ describe Email::Renderer do
   end
 
 end
-
-
-

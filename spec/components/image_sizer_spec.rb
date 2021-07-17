@@ -1,11 +1,13 @@
-require 'spec_helper'
+# frozen_string_literal: true
+
+require 'rails_helper'
 require 'image_sizer'
 
 describe ImageSizer do
 
   before do
-    SiteSetting.stubs(:max_image_width).returns(500)
-    SiteSetting.stubs(:max_image_height).returns(500)
+    SiteSetting.max_image_width = 500
+    SiteSetting.max_image_height = 500
   end
 
   it 'returns the same dimensions when smaller than the maximums' do
@@ -30,7 +32,7 @@ describe ImageSizer do
       @w, @h = ImageSizer.resize(600, 123)
     end
 
-    it 'returns the maxmimum width if larger than the maximum' do
+    it 'returns the maximum width if larger than the maximum' do
       expect(@w).to eq(500)
     end
 
@@ -46,7 +48,7 @@ describe ImageSizer do
       @w, @h = ImageSizer.resize(123, 600)
     end
 
-    it 'returns the maxmimum height if larger than the maximum' do
+    it 'returns the maximum height if larger than the maximum' do
       expect(@h).to eq(500)
     end
 

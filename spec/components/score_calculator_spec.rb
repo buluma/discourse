@@ -1,10 +1,12 @@
-require 'spec_helper'
+# frozen_string_literal: true
+
+require 'rails_helper'
 require 'score_calculator'
 
 describe ScoreCalculator do
 
-  let!(:post) { Fabricate(:post, reads: 111) }
-  let!(:another_post) { Fabricate(:post, topic: post.topic, reads: 222) }
+  fab!(:post) { Fabricate(:post, reads: 111) }
+  fab!(:another_post) { Fabricate(:post, topic: post.topic, reads: 222) }
   let(:topic) { post.topic }
 
   context 'with weightings' do
@@ -28,10 +30,6 @@ describe ScoreCalculator do
       expect(topic.score).to be_present
     end
 
-    it "gives the topic a percent_rank" do
-      expect(topic.percent_rank).not_to eq(1.0)
-    end
-
   end
 
   context 'summary' do
@@ -47,6 +45,19 @@ describe ScoreCalculator do
       ScoreCalculator.new(reads: 3).calculate
       topic.reload
       expect(topic.has_summary).to eq(false)
+    end
+
+    it "respects the min_topic_age" do
+      topic.update_columns(has_summary: true, bumped_at: 1.month.ago)
+      ScoreCalculator.new(reads: 3).calculate(min_topic_age: 20.days.ago)
+      expect(topic.has_summary).to eq(true)
+    end
+
+    it "respects the max_topic_length" do
+      Fabricate(:post, topic_id: topic.id)
+      topic.update_columns(has_summary: true)
+      ScoreCalculator.new(reads: 3).calculate(max_topic_length: 1)
+      expect(topic.has_summary).to eq(true)
     end
 
     it "won't update the site settings when the site settings don't match" do

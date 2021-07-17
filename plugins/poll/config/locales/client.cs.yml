@@ -1,37 +1,56 @@
-# encoding: utf-8
-#
-# Never edit this file. It will be overwritten when translations are pulled from Transifex.
+# WARNING: Never edit this file.
+# It will be overwritten when translations are pulled from Crowdin.
 #
 # To work with us on translations, join this project:
-# https://www.transifex.com/projects/p/discourse-org/
+# https://translate.discourse.org/
 
 cs:
   js:
     poll:
       voters:
-        zero: "hlasů"
         one: "hlasující"
-        other: "hlasů"
+        few: "hlasujících"
+        many: "hlasující"
+        other: "hlasující"
       total_votes:
-        zero: "hlasů"
-        one: "hlas"
+        one: "hlas celkem"
+        few: "hlasy celkem"
+        many: "hlasů celkem"
         other: "hlasů celkem"
       average_rating: "Průměrné hodnocení: <strong>%{average}</strong>."
       cast-votes:
         title: "Hlasujte"
-        label: "Hlasovat!"
+        label: "Hlasovat nyní!"
       show-results:
-        title: "Zobraz výsledky hlasování."
-        label: "Ukaž výsledky."
+        title: "Zobrazit výsledky hlasování"
+        label: "Ukaž výsledky"
       hide-results:
         title: "Zpět k hlasování"
-        label: "Schovej výsledky."
+      export-results:
+        label: "Export"
       open:
         title: "Otevřít hlasování"
-        label: "Otevři"
+        label: "Otevřít"
         confirm: "Opravdu chcete otevřít toto hlasování?"
       close:
-        title: "Zavřít hlasování."
+        title: "Zavřít hlasování"
         label: "Zavřít"
         confirm: "Opravdu chcete uzavřít toto hlasování?"
-      error_while_casting_votes: "Objevila se chyba při zpracování Vašeho hlasu."
+      error_while_toggling_status: "Došlo k chybě při změně statusu hlasování"
+      error_while_casting_votes: "Došlo k chybě při odesílání vašeho hlasu."
+      error_while_fetching_voters: "Došlo k chybě při zobrazování hlasujících."
+      ui_builder:
+        title: Vytvořit hlasování
+        insert: Vložit hlasování
+        help:
+          invalid_values: Minimální hodnota musí být menší než maximální hodnota.
+          min_step_value: Minimální hodnota kroku je 1
+        poll_type:
+          label: Typ
+          regular: Jedna možnost
+          multiple: Více možností
+          number: Číselné hodnocení
+        poll_config:
+          step: Krok
+        poll_public:
+          label: Zobrazit kdo hlasoval

@@ -1,9 +1,20 @@
+# frozen_string_literal: true
+
 class UserBadgeSerializer < ApplicationSerializer
-  attributes :id, :granted_at, :count, :post_id, :post_number
+
+  class UserSerializer < BasicUserSerializer
+    include UserPrimaryGroupMixin
+
+    attributes :name,
+               :moderator,
+               :admin
+  end
+
+  attributes :id, :granted_at, :created_at, :count, :post_id, :post_number
 
   has_one :badge
-  has_one :user, serializer: BasicUserSerializer, root: :users
-  has_one :granted_by, serializer: BasicUserSerializer, root: :users
+  has_one :user, serializer: UserSerializer, root: :users
+  has_one :granted_by, serializer: UserSerializer, root: :users
   has_one :topic, serializer: BasicTopicSerializer
 
   def include_count?

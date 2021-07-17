@@ -1,6 +1,7 @@
 # encoding: utf-8
+# frozen_string_literal: true
 
-require 'spec_helper'
+require 'rails_helper'
 require 'text_sentinel'
 
 describe TextSentinel do
@@ -49,7 +50,7 @@ describe TextSentinel do
     [ 'evil trout is evil',
       "去年十社會警告",
       "P.S. Пробирочка очень толковая и весьма умная, так что не обнимайтесь.",
-      "LOOK: 去年十社會警告"
+      "Look: 去年十社會警告"
     ].each do |valid_body|
       it "handles a valid body in a private message" do
         expect(TextSentinel.body_sentinel(valid_body, private_message: true)).to be_valid
@@ -60,6 +61,18 @@ describe TextSentinel do
       end
     end
 
+    it "uses a sensible min entropy value when min body length is less than min entropy" do
+      SiteSetting.min_post_length = 3
+      SiteSetting.body_min_entropy = 7
+      expect(TextSentinel.body_sentinel('Yup')).to be_valid
+    end
+
+    it "uses a sensible min entropy value when min pm body length is less than min entropy" do
+      SiteSetting.min_post_length = 5
+      SiteSetting.min_personal_message_post_length = 3
+      SiteSetting.body_min_entropy = 7
+      expect(TextSentinel.body_sentinel('Lol', private_message: true)).to be_valid
+    end
   end
 
   context "validity" do
@@ -74,6 +87,15 @@ describe TextSentinel do
       expect(TextSentinel.new(valid_string.upcase)).not_to be_valid
     end
 
+    it "doesn't allow all caps foreign topics" do
+      expect(TextSentinel.new('É COM VOCÊ LOMBARDIAM. MA VEJAM SÓ, VEJAM SÓ. VALENDO UM MILHÃO DE REAISAMMM. MA VALE DÉRREAISAM?')).not_to be_valid
+    end
+
+    it "allows all caps topics when loud posts are allowed" do
+      SiteSetting.allow_uppercase_posts = true
+      expect(TextSentinel.new(valid_string.upcase)).to be_valid
+    end
+
     it "enforces the minimum entropy" do
       expect(TextSentinel.new(valid_string, min_entropy: 16)).to be_valid
     end
@@ -84,6 +106,16 @@ describe TextSentinel do
 
     it "allows all foreign characters" do
       expect(TextSentinel.new("去年十二月，北韓不顧國際社會警告")).to be_valid
+    end
+
+    it "skips uppercase text for CJK locale" do
+      SiteSetting.default_locale = 'zh_CN'
+      expect(TextSentinel.new("去年SHIER月，北韓不顧國際社會警告")).to be_valid
+    end
+
+    it "skips long words check (`seems_unpretentious`) for CJK locale" do
+      SiteSetting.default_locale = 'zh_CN'
+      expect(TextSentinel.title_sentinel("非常长的文字没有空格分割肯定会触发警告但这不应该是一个错误这个要超过五十个个字符" * 2)).to be_valid
     end
 
     it "doesn't allow a long alphanumeric string with no spaces" do
@@ -108,31 +140,25 @@ describe TextSentinel do
       expect(TextSentinel.new("error in org.gradle.internal.graph.CachingDirectedGraphWalker", max_word_length: 30)).to be_valid
     end
 
+    it "allows a long string with colons" do
+      expect(TextSentinel.new("error in org.gradle.internal.graph.CachingDirectedGraphWalker:colon", max_word_length: 30)).to be_valid
+    end
+
   end
 
   context 'title_sentinel' do
 
     it "uses a sensible min entropy value when min title length is less than title_min_entropy" do
-      SiteSetting.stubs(:min_topic_title_length).returns(3)
-      SiteSetting.stubs(:title_min_entropy).returns(10)
+      SiteSetting.min_topic_title_length = 3
+      SiteSetting.title_min_entropy = 10
       expect(TextSentinel.title_sentinel('Hey')).to be_valid
     end
 
   end
 
-  context 'body_sentinel' do
-
-    it "uses a sensible min entropy value when min body length is less than min entropy" do
-      SiteSetting.stubs(:min_post_length).returns(3)
-      SiteSetting.stubs(:body_min_entropy).returns(7)
-      expect(TextSentinel.body_sentinel('Yup')).to be_valid
-    end
-
-    it "uses a sensible min entropy value when min pm body length is less than min entropy" do
-      SiteSetting.stubs(:min_post_length).returns(5)
-      SiteSetting.stubs(:min_private_message_post_length).returns(3)
-      SiteSetting.stubs(:body_min_entropy).returns(7)
-      expect(TextSentinel.body_sentinel('Lol', private_message: true)).to be_valid
+  context 'seems_unpretentious?' do
+    it 'works with nil title' do
+      expect(TextSentinel.title_sentinel(nil).seems_unpretentious?).to eq(true)
     end
   end
 

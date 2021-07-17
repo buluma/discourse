@@ -1,25 +1,9 @@
 @import "common";
 
-/* @import "desktop/*"; TODO: get this working again */
+@import "desktop/_index";
 
-@import "desktop/alert";
-@import "desktop/banner";
-@import "desktop/compose";
-@import "desktop/discourse";
-@import "desktop/header";
-@import "desktop/login";
-@import "desktop/modal";
-@import "desktop/user-card";
-@import "desktop/topic-list";
-@import "desktop/topic-post";
-@import "desktop/topic";
-@import "desktop/upload";
-@import "desktop/user";
-@import "desktop/history";
-@import "desktop/queued-posts";
+// Import all component-specific files
+@import "desktop/components/_index";
 
-/* These files doesn't actually exist, they are injected by DiscourseSassImporter. */
-
-@import "plugins";
-@import "plugins_desktop";
-@import "category_backgrounds";
+// Import all admin-specific files
+@import "desktop/admin/_index";

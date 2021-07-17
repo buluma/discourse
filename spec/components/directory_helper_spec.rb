@@ -1,5 +1,6 @@
-require 'spec_helper'
-require_dependency 'directory_helper'
+# frozen_string_literal: true
+
+require 'rails_helper'
 
 describe DirectoryHelper do
   class DummyClass

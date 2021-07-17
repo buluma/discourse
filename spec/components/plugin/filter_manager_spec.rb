@@ -1,15 +1,16 @@
-require 'spec_helper'
-require_dependency 'plugin/filter_manager'
+# frozen_string_literal: true
+
+require 'rails_helper'
 
 describe Plugin::FilterManager do
-  let(:instance){ Plugin::FilterManager.new }
+  let(:instance) { Plugin::FilterManager.new }
 
   it "calls registered filters correctly" do
-    instance.register(:added_numbers) do |context,result|
+    instance.register(:added_numbers) do |context, result|
       context + result + 1
     end
 
-    instance.register(:added_numbers) do |context,result|
+    instance.register(:added_numbers) do |context, result|
       context + result + 2
     end
 
@@ -20,7 +21,7 @@ describe Plugin::FilterManager do
     expect do
       instance.register(:test) do
       end
-    end.to raise_exception
+    end.to raise_error(ArgumentError)
   end
 
   it "should return the original if no filters exist" do
@@ -30,6 +31,6 @@ describe Plugin::FilterManager do
   it "should raise an exception if no block is passed in" do
     expect do
       instance.register(:test)
-    end.to raise_exception
+    end.to raise_error(ArgumentError)
   end
 end

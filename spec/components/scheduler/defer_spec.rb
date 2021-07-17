@@ -1,6 +1,7 @@
 # encoding: utf-8
-require 'spec_helper'
-require_dependency 'scheduler/defer'
+# frozen_string_literal: true
+
+require 'rails_helper'
 
 describe Scheduler::Defer do
   class DeferInstance
@@ -23,6 +24,26 @@ describe Scheduler::Defer do
     @defer.stop!
   end
 
+  it "supports timeout reporting" do
+    @defer.timeout = 0.05
+
+    m = track_log_messages do |messages|
+      10.times do
+        @defer.later("fast job") {}
+      end
+      @defer.later "weird slow job" do
+        sleep
+      end
+
+      wait_for(200) do
+        messages.length == 1
+      end
+    end
+
+    expect(m.length).to eq(1)
+    expect(m[0][2]).to include("weird slow job")
+  end
+
   it "can pause and resume" do
     x = 1
     @defer.pause
@@ -31,18 +52,19 @@ describe Scheduler::Defer do
       x = 2
     end
 
+    expect(@defer.length).to eq(1)
+
     @defer.do_all_work
 
     expect(x).to eq(2)
 
     @defer.resume
 
-
     @defer.later do
       x = 3
     end
 
-    wait_for(10) do
+    wait_for(1000) do
       x == 3
     end
 
@@ -52,7 +74,7 @@ describe Scheduler::Defer do
   it "recovers from a crash / fork" do
     s = nil
     @defer.stop!
-    wait_for(10) do
+    wait_for(1000) do
       @defer.stopped?
     end
     # hack allow thread to die
@@ -62,7 +84,7 @@ describe Scheduler::Defer do
       s = "good"
     end
 
-    wait_for(10) do
+    wait_for(1000) do
       s == "good"
     end
 
@@ -76,7 +98,7 @@ describe Scheduler::Defer do
       s = "good"
     end
 
-    wait_for(10) do
+    wait_for(1000) do
       s == "good"
     end
 

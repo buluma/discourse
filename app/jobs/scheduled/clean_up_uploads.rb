@@ -1,25 +1,71 @@
-module Jobs
+# frozen_string_literal: true
 
-  class CleanUpUploads < Jobs::Scheduled
+module Jobs
+  class CleanUpUploads < ::Jobs::Scheduled
     every 1.hour
 
     def execute(args)
-      return unless SiteSetting.clean_up_uploads?
-
       grace_period = [SiteSetting.clean_orphan_uploads_grace_period_hours, 1].max
 
-      Upload.where("created_at < ?", grace_period.hour.ago)
-            .where("retain_hours IS NULL OR created_at < current_timestamp - interval '1 hour' * retain_hours")
-            .where("id NOT IN (SELECT upload_id FROM post_uploads)")
-            .where("id NOT IN (SELECT uploaded_avatar_id FROM users)")
-            .where("id NOT IN (SELECT gravatar_upload_id FROM user_avatars)")
-            .where("url NOT IN (SELECT profile_background FROM user_profiles)")
-            .where("url NOT IN (SELECT card_background FROM user_profiles)")
-            .where("url NOT IN (SELECT logo_url FROM categories)")
-            .where("url NOT IN (SELECT background_url FROM categories)")
-            .destroy_all
+      # always remove invalid upload records
+      Upload
+        .by_users
+        .where("retain_hours IS NULL OR created_at < current_timestamp - interval '1 hour' * retain_hours")
+        .where("created_at < ?", grace_period.hour.ago)
+        .where(url: "")
+        .find_each(&:destroy!)
+
+      return unless SiteSetting.clean_up_uploads?
+
+      if c = last_cleanup
+        return if (Time.zone.now.to_i - c) < (grace_period / 2).hours
+      end
+
+      base_url = Discourse.store.internal? ? Discourse.store.relative_base_url : Discourse.store.absolute_base_url
+      s3_hostname = URI.parse(base_url).hostname
+      s3_cdn_hostname = URI.parse(SiteSetting.Upload.s3_cdn_url || "").hostname
+
+      result = Upload.by_users
+        .where("uploads.retain_hours IS NULL OR uploads.created_at < current_timestamp - interval '1 hour' * uploads.retain_hours")
+        .where("uploads.created_at < ?", grace_period.hour.ago)
+        .where("uploads.access_control_post_id IS NULL")
+        .joins("LEFT JOIN post_uploads pu ON pu.upload_id = uploads.id")
+        .where("pu.upload_id IS NULL")
+        .with_no_non_post_relations
+
+      result.find_each do |upload|
+        if upload.sha1.present?
+          encoded_sha = Base62.encode(upload.sha1.hex)
+          next if ReviewableQueuedPost.pending.where("payload->>'raw' LIKE '%#{upload.sha1}%' OR payload->>'raw' LIKE '%#{encoded_sha}%'").exists?
+          next if Draft.where("data LIKE '%#{upload.sha1}%' OR data LIKE '%#{encoded_sha}%'").exists?
+          next if ThemeSetting.where(data_type: ThemeSetting.types[:upload]).where("value LIKE ?", "%#{upload.sha1}%").exists?
+          upload.destroy
+        else
+          upload.delete
+        end
+      end
+
+      self.last_cleanup = Time.zone.now.to_i
+    end
+
+    def last_cleanup=(v)
+      Discourse.redis.setex(last_cleanup_key, 7.days.to_i, v.to_s)
+    end
+
+    def last_cleanup
+      v = Discourse.redis.get(last_cleanup_key)
+      v ? v.to_i : v
+    end
+
+    def reset_last_cleanup!
+      Discourse.redis.del(last_cleanup_key)
+    end
+
+    protected
+
+    def last_cleanup_key
+      "LAST_UPLOAD_CLEANUP"
     end
 
   end
-
 end

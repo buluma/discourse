@@ -1,4 +1,9 @@
+# frozen_string_literal: true
+
 class TrustLevel3RequirementsSerializer < ApplicationSerializer
+
+  has_one :penalty_counts, embed: :object, serializer: PenaltyCountsSerializer
+
   attributes :time_period,
              :requirements_met,
              :requirements_lost,
@@ -15,10 +20,6 @@ class TrustLevel3RequirementsSerializer < ApplicationSerializer
              :num_likes_received, :min_likes_received,
              :num_likes_received_days, :min_likes_received_days,
              :num_likes_received_users, :min_likes_received_users
-
-  def time_period
-    TrustLevel3Requirements::TIME_PERIOD
-  end
 
   def requirements_met
     object.requirements_met?

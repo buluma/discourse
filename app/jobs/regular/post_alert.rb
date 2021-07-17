@@ -1,14 +1,16 @@
+# frozen_string_literal: true
+
 module Jobs
-  class PostAlert < Jobs::Base
+  class PostAlert < ::Jobs::Base
 
     def execute(args)
-      # maybe it was removed by the time we are making the post
-      if post = Post.find_by(id: args[:post_id])
-        # maybe the topic was deleted, so skip in that case as well
-        PostAlerter.post_created(post) if post.topic
+      post = Post.find_by(id: args[:post_id])
+      if post&.topic && post.raw.present?
+        opts = args[:options] || {}
+        new_record = true == args[:new_record]
+        PostAlerter.new(opts).after_save_post(post, new_record)
       end
     end
 
   end
 end
-

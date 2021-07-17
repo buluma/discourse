@@ -1,4 +1,7 @@
+# frozen_string_literal: true
+
 class TopicListItemSerializer < ListableTopicSerializer
+  include TopicTagsMixin
 
   attributes :views,
              :like_count,
@@ -9,13 +12,16 @@ class TopicListItemSerializer < ListableTopicSerializer
              :op_like_count,
              :pinned_globally,
              :bookmarked_post_numbers,
-             :liked_post_numbers
+             :liked_post_numbers,
+             :featured_link,
+             :featured_link_root_domain,
+             :allowed_user_count
 
   has_many :posters, serializer: TopicPosterSerializer, embed: :objects
   has_many :participants, serializer: TopicPosterSerializer, embed: :objects
 
   def posters
-    object.posters || []
+    object.posters || object.posters_summary || []
   end
 
   def op_like_count
@@ -24,6 +30,16 @@ class TopicListItemSerializer < ListableTopicSerializer
 
   def last_poster_username
     posters.find { |poster| poster.user.id == object.last_post_user_id }.try(:user).try(:username)
+  end
+
+  def category_id
+
+    # If it's a shared draft, show the destination topic instead
+    if object.includes_destination_category && object.shared_draft
+      return object.shared_draft.category_id
+    end
+
+    object.category_id
   end
 
   def participants
@@ -61,6 +77,23 @@ class TopicListItemSerializer < ListableTopicSerializer
     # this is rather odd code, but we need to have op_likes loaded somehow
     # simplest optimisation is adding a cache column on topic.
     object.association(:first_post).loaded?
+  end
+
+  def include_featured_link?
+    SiteSetting.topic_featured_link_enabled
+  end
+
+  def include_featured_link_root_domain?
+    SiteSetting.topic_featured_link_enabled && object.featured_link.present?
+  end
+
+  def allowed_user_count
+    # Don't use count as it will result in a query
+    object.allowed_users.length
+  end
+
+  def include_allowed_user_count?
+    object.private_message?
   end
 
 end

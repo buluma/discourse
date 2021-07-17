@@ -1,16 +1,37 @@
+# frozen_string_literal: true
+
 class Badge < ActiveRecord::Base
-  # badge ids
+  # TODO: Drop in July 2021
+  self.ignored_columns = %w{image}
+
+  include GlobalPath
+
+  # NOTE: These badge ids are not in order! They are grouped logically.
+  #       When picking an id, *search* for it.
+
+  BasicUser = 1
+  Member = 2
+  Regular = 3
+  Leader = 4
+
   Welcome = 5
   NicePost = 6
   GoodPost = 7
   GreatPost = 8
   Autobiographer = 9
   Editor = 10
+  WikiEditor = 48
+
   FirstLike = 11
   FirstShare = 12
   FirstFlag = 13
   FirstLink = 14
   FirstQuote = 15
+  FirstMention = 40
+  FirstEmoji = 41
+  FirstOnebox = 42
+  FirstReplyByEmail = 43
+
   ReadGuidelines = 16
   Reader = 17
   NiceTopic = 18
@@ -19,18 +40,43 @@ class Badge < ActiveRecord::Base
   NiceShare = 21
   GoodShare = 22
   GreatShare = 23
-  OneYearAnniversary = 24
+  Anniversary = 24
 
   Promoter = 25
   Campaigner = 26
   Champion = 27
 
+  PopularLink = 28
+  HotLink = 29
+  FamousLink = 30
+
+  Appreciated = 36
+  Respected = 37
+  Admired = 31
+
+  OutOfLove = 33
+  HigherLove = 34
+  CrazyInLove = 35
+
+  ThankYou = 38
+  GivesBack = 32
+  Empathetic = 39
+
+  Enthusiast = 45
+  Aficionado = 46
+  Devotee = 47
+
+  NewUserOfTheMonth = 44
+
   # other consts
   AutobiographerMinBioLength = 10
 
+  # used by serializer
+  attr_accessor :has_badge
+
   def self.trigger_hash
     Hash[*(
-      Badge::Trigger.constants.map{|k|
+      Badge::Trigger.constants.map { |k|
         [k.to_s.underscore, Badge::Trigger.const_get(k)]
       }.flatten
     )]
@@ -42,6 +88,7 @@ class Badge < ActiveRecord::Base
     PostRevision = 2
     TrustLevelChange = 4
     UserChange = 8
+    PostProcessed = 16 # deprecated
 
     def self.is_none?(trigger)
       [None].include? trigger
@@ -56,198 +103,9 @@ class Badge < ActiveRecord::Base
     end
   end
 
-  module Queries
-
-    Reader = <<SQL
-    SELECT id user_id, current_timestamp granted_at
-    FROM users
-    WHERE id IN
-    (
-      SELECT pt.user_id
-      FROM post_timings pt
-      JOIN badge_posts b ON b.post_number = pt.post_number AND
-                            b.topic_id = pt.topic_id
-      JOIN topics t ON t.id = pt.topic_id
-      LEFT JOIN user_badges ub ON ub.badge_id = 17 AND ub.user_id = pt.user_id
-      WHERE ub.id IS NULL AND t.posts_count > 100
-      GROUP BY pt.user_id, pt.topic_id, t.posts_count
-      HAVING count(*) >= t.posts_count
-    )
-SQL
-
-    ReadGuidelines = <<SQL
-    SELECT user_id, read_faq granted_at
-    FROM user_stats
-    WHERE read_faq IS NOT NULL AND (user_id IN (:user_ids) OR :backfill)
-SQL
-
-    FirstQuote = <<SQL
-    SELECT ids.user_id, q.post_id, q.created_at granted_at
-    FROM
-    (
-      SELECT p1.user_id, MIN(q1.id) id
-      FROM quoted_posts q1
-      JOIN badge_posts p1 ON p1.id = q1.post_id
-      JOIN badge_posts p2 ON p2.id = q1.quoted_post_id
-      WHERE (:backfill OR ( p1.id IN (:post_ids) ))
-      GROUP BY p1.user_id
-    ) ids
-    JOIN quoted_posts q ON q.id = ids.id
-SQL
-
-    FirstLink = <<SQL
-    SELECT l.user_id, l.post_id, l.created_at granted_at
-    FROM
-    (
-      SELECT MIN(l1.id) id
-      FROM topic_links l1
-      JOIN badge_posts p1 ON p1.id = l1.post_id
-      JOIN badge_posts p2 ON p2.id = l1.link_post_id
-      WHERE NOT reflection AND p1.topic_id <> p2.topic_id AND not quote AND
-        (:backfill OR ( p1.id in (:post_ids) ))
-      GROUP BY l1.user_id
-    ) ids
-    JOIN topic_links l ON l.id = ids.id
-SQL
-
-    FirstShare = <<SQL
-    SELECT views.user_id, i2.post_id, i2.created_at granted_at
-    FROM
-    (
-      SELECT i.user_id, MIN(i.id) i_id
-      FROM incoming_links i
-      JOIN badge_posts p on p.id = i.post_id
-      WHERE i.user_id IS NOT NULL
-      GROUP BY i.user_id
-    ) as views
-    JOIN incoming_links i2 ON i2.id = views.i_id
-SQL
-
-    FirstFlag = <<SQL
-    SELECT pa1.user_id, pa1.created_at granted_at, pa1.post_id
-    FROM (
-      SELECT pa.user_id, min(pa.id) id
-      FROM post_actions pa
-      JOIN badge_posts p on p.id = pa.post_id
-      WHERE post_action_type_id IN (#{PostActionType.flag_types.values.join(",")}) AND
-        (:backfill OR pa.post_id IN (:post_ids) )
-      GROUP BY pa.user_id
-    ) x
-    JOIN post_actions pa1 on pa1.id = x.id
-SQL
-
-    FirstLike = <<SQL
-    SELECT pa1.user_id, pa1.created_at granted_at, pa1.post_id
-    FROM (
-      SELECT pa.user_id, min(pa.id) id
-      FROM post_actions pa
-      JOIN badge_posts p on p.id = pa.post_id
-      WHERE post_action_type_id = 2 AND
-        (:backfill OR pa.post_id IN (:post_ids) )
-      GROUP BY pa.user_id
-    ) x
-    JOIN post_actions pa1 on pa1.id = x.id
-SQL
-
-    # Incorrect, but good enough - (earlies post edited vs first edit)
-    Editor = <<SQL
-    SELECT p.user_id, min(p.id) post_id, min(p.created_at) granted_at
-    FROM badge_posts p
-    WHERE p.self_edits > 0 AND
-        (:backfill OR p.id IN (:post_ids) )
-    GROUP BY p.user_id
-SQL
-
-    Welcome = <<SQL
-    SELECT p.user_id, min(post_id) post_id, min(pa.created_at) granted_at
-    FROM post_actions pa
-    JOIN badge_posts p on p.id = pa.post_id
-    WHERE post_action_type_id = 2 AND
-        (:backfill OR pa.post_id IN (:post_ids) )
-    GROUP BY p.user_id
-SQL
-
-    Autobiographer = <<SQL
-    SELECT u.id user_id, current_timestamp granted_at
-    FROM users u
-    JOIN user_profiles up on u.id = up.user_id
-    WHERE bio_raw IS NOT NULL AND LENGTH(TRIM(bio_raw)) > #{Badge::AutobiographerMinBioLength} AND
-          uploaded_avatar_id IS NOT NULL AND
-          (:backfill OR u.id IN (:user_ids) )
-SQL
-
-    # member for a year + has posted at least once during that year
-    OneYearAnniversary = <<-SQL
-    SELECT u.id AS user_id, MIN(u.created_at + interval '1 year') AS granted_at
-      FROM users u
-      JOIN posts p ON p.user_id = u.id
-     WHERE u.id > 0
-       AND u.active
-       AND NOT u.blocked
-       AND u.created_at + interval '1 year' < now()
-       AND p.deleted_at IS NULL
-       AND NOT p.hidden
-       AND p.created_at + interval '1 year' > now()
-       AND (:backfill OR u.id IN (:user_ids))
-     GROUP BY u.id
-     HAVING COUNT(p.id) > 0
-SQL
-
-    def self.invite_badge(count,trust_level)
-"
-    SELECT u.id user_id, current_timestamp granted_at
-    FROM users u
-    WHERE u.id IN (
-      SELECT invited_by_id
-      FROM invites i
-      JOIN users u2 ON u2.id = i.user_id
-      WHERE i.deleted_at IS NULL AND u2.active AND u2.trust_level >= #{trust_level.to_i} AND not u2.blocked
-      GROUP BY invited_by_id
-      HAVING COUNT(*) > #{count.to_i}
-    ) AND u.active AND NOT u.blocked AND u.id > 0 AND
-      (:backfill OR u.id IN (:user_ids) )
-"
-    end
-
-    def self.like_badge(count, is_topic)
-      # we can do better with dates, but its hard work
-"
-    SELECT p.user_id, p.id post_id, p.updated_at granted_at
-    FROM badge_posts p
-    WHERE #{is_topic ? "p.post_number = 1" : "p.post_number > 1" } AND p.like_count >= #{count.to_i} AND
-      (:backfill OR p.id IN (:post_ids) )
-"
-    end
-
-    def self.trust_level(level)
-      # we can do better with dates, but its hard work figuring this out historically
-"
-    SELECT u.id user_id, current_timestamp granted_at FROM users u
-    WHERE trust_level >= #{level.to_i} AND (
-      :backfill OR u.id IN (:user_ids)
-    )
-"
-    end
-
-    def self.sharing_badge(count)
-<<SQL
-    SELECT views.user_id, i2.post_id, i2.created_at granted_at
-    FROM
-    (
-      SELECT i.user_id, MIN(i.id) i_id
-      FROM incoming_links i
-      JOIN badge_posts p on p.id = i.post_id
-      WHERE i.user_id IS NOT NULL
-      GROUP BY i.user_id,i.post_id
-      HAVING COUNT(*) > #{count}
-    ) as views
-    JOIN incoming_links i2 ON i2.id = views.i_id
-SQL
-    end
-  end
-
   belongs_to :badge_type
   belongs_to :badge_grouping
+  belongs_to :image_upload, class_name: 'Upload'
 
   has_many :user_badges, dependent: :destroy
 
@@ -256,15 +114,24 @@ SQL
   validates :allow_title, inclusion: [true, false]
   validates :multiple_grant, inclusion: [true, false]
 
-  scope :enabled, ->{ where(enabled: true) }
+  scope :enabled, -> { where(enabled: true) }
 
   before_create :ensure_not_system
 
-  # fields that can not be edited on system badges
-  def self.protected_system_fields
-    [:badge_type_id, :multiple_grant, :target_posts, :show_posts, :query, :trigger, :auto_revoke, :listable]
+  after_commit do
+    SvgSprite.expire_cache
+    UserStat.update_distinct_badge_count if saved_change_to_enabled?
+    UserBadge.ensure_consistency! if saved_change_to_enabled?
   end
 
+  # fields that can not be edited on system badges
+  def self.protected_system_fields
+    [
+      :name, :badge_type_id, :multiple_grant,
+      :target_posts, :show_posts, :query,
+      :trigger, :auto_revoke, :listable
+    ]
+  end
 
   def self.trust_level_badge_ids
     (1..4).to_a
@@ -281,6 +148,90 @@ SQL
     }
   end
 
+  def self.ensure_consistency!
+    DB.exec <<~SQL
+      DELETE FROM user_badges
+            USING user_badges ub
+        LEFT JOIN users u ON u.id = ub.user_id
+            WHERE u.id IS NULL
+              AND user_badges.id = ub.id
+    SQL
+
+    DB.exec <<~SQL
+      WITH X AS (
+          SELECT badge_id
+               , COUNT(user_id) users
+            FROM user_badges
+        GROUP BY badge_id
+      )
+      UPDATE badges
+         SET grant_count = X.users
+        FROM X
+       WHERE id = X.badge_id
+         AND grant_count <> X.users
+    SQL
+  end
+
+  def clear_user_titles!
+    DB.exec(<<~SQL, badge_id: self.id, updated_at: Time.zone.now)
+      UPDATE users AS u
+      SET title = '', updated_at = :updated_at
+      FROM user_profiles AS up
+      WHERE up.user_id = u.id AND up.granted_title_badge_id = :badge_id
+    SQL
+    DB.exec(<<~SQL, badge_id: self.id)
+      UPDATE user_profiles AS up
+      SET badge_granted_title = false, granted_title_badge_id = NULL
+      WHERE up.granted_title_badge_id = :badge_id
+    SQL
+  end
+
+  ##
+  # Update all user titles based on a badge to the new name
+  def update_user_titles!(new_title)
+    DB.exec(<<~SQL, granted_title_badge_id: self.id, title: new_title, updated_at: Time.zone.now)
+      UPDATE users AS u
+      SET title = :title, updated_at = :updated_at
+      FROM user_profiles AS up
+      WHERE up.user_id = u.id AND up.granted_title_badge_id = :granted_title_badge_id
+    SQL
+  end
+
+  ##
+  # When a badge has its TranslationOverride cleared, reset
+  # all user titles granted to the standard name.
+  def reset_user_titles!
+    DB.exec(<<~SQL, granted_title_badge_id: self.id, updated_at: Time.zone.now)
+      UPDATE users AS u
+      SET title = badges.name, updated_at = :updated_at
+      FROM user_profiles AS up
+      INNER JOIN badges ON badges.id = up.granted_title_badge_id
+      WHERE up.user_id = u.id AND up.granted_title_badge_id = :granted_title_badge_id
+    SQL
+  end
+
+  def self.i18n_name(name)
+    name.downcase.tr(' ', '_')
+  end
+
+  def self.display_name(name)
+    I18n.t(i18n_key(name), default: name)
+  end
+
+  def self.i18n_key(name)
+    "badges.#{i18n_name(name)}.name"
+  end
+
+  def self.find_system_badge_id_from_translation_key(translation_key)
+    return unless translation_key.starts_with?('badges.')
+    badge_name_klass = translation_key.split('.').second.camelize
+    Badge.const_defined?(badge_name_klass) ? "Badge::#{badge_name_klass}".constantize : nil
+  end
+
+  def awarded_for_trust_level?
+    id <= 4
+  end
+
   def reset_grant_count!
     self.grant_count = UserBadge.where(badge_id: id).count
     save!
@@ -291,30 +242,78 @@ SQL
   end
 
   def default_icon=(val)
-    self.icon ||= val
-    self.icon = val if self.icon = "fa-certificate"
-  end
-
-  def default_name=(val)
-    self.name ||= val
+    if self.image_upload_id.blank?
+      self.icon ||= val
+      self.icon = val if self.icon == "fa-certificate"
+    end
   end
 
   def default_allow_title=(val)
+    return unless self.new_record?
     self.allow_title ||= val
   end
 
   def default_badge_grouping_id=(val)
     # allow to correct orphans
-    if !self.badge_grouping_id || self.badge_grouping_id < 0
+    if !self.badge_grouping_id || self.badge_grouping_id <= BadgeGrouping::Other
       self.badge_grouping_id = val
     end
   end
 
-  protected
-  def ensure_not_system
-    unless id
-      self.id = [Badge.maximum(:id) + 1, 100].max
+  def display_name
+    self.class.display_name(name)
+  end
+
+  def translation_key
+    self.class.i18n_key(name)
+  end
+
+  def long_description
+    key = "badges.#{i18n_name}.long_description"
+    I18n.t(key, default: self[:long_description] || '', base_uri: Discourse.base_path, max_likes_per_day: SiteSetting.max_likes_per_day)
+  end
+
+  def long_description=(val)
+    self[:long_description] = val if val != long_description
+    val
+  end
+
+  def description
+    key = "badges.#{i18n_name}.description"
+    I18n.t(key, default: self[:description] || '', base_uri: Discourse.base_path, max_likes_per_day: SiteSetting.max_likes_per_day)
+  end
+
+  def description=(val)
+    self[:description] = val if val != description
+    val
+  end
+
+  def slug
+    Slug.for(self.display_name, '-')
+  end
+
+  def manually_grantable?
+    query.blank? && !system?
+  end
+
+  def i18n_name
+    @i18n_name ||= self.class.i18n_name(name)
+  end
+
+  def image_url
+    if image_upload_id.present?
+      upload_cdn_path(image_upload.url)
     end
+  end
+
+  def for_beginners?
+    id == Welcome || (badge_grouping_id == BadgeGrouping::GettingStarted && id != NewUserOfTheMonth)
+  end
+
+  protected
+
+  def ensure_not_system
+    self.id = [Badge.maximum(:id) + 1, 100].max unless id
   end
 end
 
@@ -323,7 +322,7 @@ end
 # Table name: badges
 #
 #  id                :integer          not null, primary key
-#  name              :string(255)      not null
+#  name              :string           not null
 #  description       :text
 #  badge_type_id     :integer          not null
 #  grant_count       :integer          default(0), not null
@@ -331,7 +330,7 @@ end
 #  updated_at        :datetime         not null
 #  allow_title       :boolean          default(FALSE), not null
 #  multiple_grant    :boolean          default(FALSE), not null
-#  icon              :string(255)      default("fa-certificate")
+#  icon              :string           default("fa-certificate")
 #  listable          :boolean          default(TRUE)
 #  target_posts      :boolean          default(FALSE)
 #  query             :text
@@ -341,9 +340,11 @@ end
 #  trigger           :integer
 #  show_posts        :boolean          default(FALSE), not null
 #  system            :boolean          default(FALSE), not null
-#  image             :string(255)
+#  long_description  :text
+#  image_upload_id   :integer
 #
 # Indexes
 #
-#  index_badges_on_name  (name) UNIQUE
+#  index_badges_on_badge_type_id  (badge_type_id)
+#  index_badges_on_name           (name) UNIQUE
 #

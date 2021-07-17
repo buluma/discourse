@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class BadgeIndexSerializer < BadgeSerializer
   attributes :has_badge
   has_one :badge_grouping
@@ -9,4 +11,5 @@ class BadgeIndexSerializer < BadgeSerializer
   def has_badge
     @options[:user_badges].include?(object.id)
   end
+
 end

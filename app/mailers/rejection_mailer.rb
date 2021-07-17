@@ -1,20 +1,32 @@
-require_dependency 'email/message_builder'
+# frozen_string_literal: true
+
+require 'email/message_builder'
 
 class RejectionMailer < ActionMailer::Base
   include Email::BuildEmailHelper
 
-  DISALLOWED_TEMPLATE_ARGS = [:to, :from, :base_url,
+  DISALLOWED_TEMPLATE_ARGS = [:to,
+                              :from,
+                              :base_url,
                               :user_preferences_url,
-                              :include_respond_instructions, :html_override,
-                              :add_unsubscribe_link, :respond_instructions,
-                              :style, :body, :post_id, :topic_id, :subject,
-                              :template, :allow_reply_by_email,
-                              :private_reply, :from_alias]
+                              :include_respond_instructions,
+                              :html_override,
+                              :add_unsubscribe_link,
+                              :respond_instructions,
+                              :style,
+                              :body,
+                              :post_id,
+                              :topic_id,
+                              :subject,
+                              :template,
+                              :allow_reply_by_email,
+                              :private_reply,
+                              :from_alias]
 
   # Send an email rejection message.
   #
   # template - i18n key under system_messages
-  # message_from - Who to send the rejection messsage to
+  # message_from - Who to send the rejection message to
   # template_args - arguments to pass to i18n for interpolation into the message
   #     Certain keys are disallowed in template_args to avoid confusing the
   #     BuildEmailHelper. You can see the list in DISALLOWED_TEMPLATE_ARGS.

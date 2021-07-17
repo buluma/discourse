@@ -1,8 +1,8 @@
-require 'spec_helper'
+# frozen_string_literal: true
+
+require 'rails_helper'
 
 describe UserStat do
-
-  it { is_expected.to belong_to :user }
 
   it "is created automatically when a user is created" do
     user = Fabricate(:evil_trout)
@@ -25,7 +25,7 @@ describe UserStat do
       end
 
       context 'with a view' do
-        let(:topic) { Fabricate(:topic) }
+        fab!(:topic) { Fabricate(:topic) }
         let!(:view) { TopicViewItem.add(topic.id, '127.0.0.1', user.id) }
 
         before do
@@ -74,28 +74,96 @@ describe UserStat do
     end
   end
 
+  describe 'ensure consistency!' do
+    it 'can update first unread' do
+      post = create_post
+
+      freeze_time 10.minutes.from_now
+      create_post(topic_id: post.topic_id)
+
+      post.user.update!(last_seen_at: Time.now)
+
+      UserStat.ensure_consistency!
+
+      post.user.user_stat.reload
+      expect(post.user.user_stat.first_unread_at).to eq_time(Time.zone.now)
+    end
+
+    it 'updates first unread pm timestamp correctly' do
+      pm_topic = Fabricate(:private_message_topic)
+      user = pm_topic.user
+      user.update!(last_seen_at: Time.zone.now)
+      create_post(user: user, topic_id: pm_topic.id)
+
+      TopicUser.change(user.id, pm_topic.id,
+        notification_level: TopicUser.notification_levels[:tracking]
+      )
+
+      # user that is not tracking PM topic
+      user_2 = Fabricate(:user, last_seen_at: Time.zone.now)
+      pm_topic.allowed_users << user_2
+
+      TopicUser.change(user_2.id, pm_topic.id,
+        notification_level: TopicUser.notification_levels[:regular]
+      )
+
+      # User that has not been seen
+      user_3 = Fabricate(:user)
+      pm_topic.allowed_users << user_3
+
+      TopicUser.change(user_3.id, pm_topic.id,
+        notification_level: TopicUser.notification_levels[:tracking]
+      )
+
+      freeze_time 10.minutes.from_now
+
+      post = create_post(
+        user: Fabricate(:admin),
+        topic_id: pm_topic.id
+      )
+
+      UserStat.ensure_consistency!
+
+      expect(user.user_stat.reload.first_unread_pm_at).to eq_time(post.topic.updated_at)
+      expect(user_2.user_stat.reload.first_unread_pm_at).to_not eq_time(post.topic.updated_at)
+      expect(user_3.user_stat.reload.first_unread_pm_at).to_not eq_time(post.topic.updated_at)
+    end
+  end
 
   describe 'update_time_read!' do
-    let(:user) { Fabricate(:user) }
+    fab!(:user) { Fabricate(:user) }
     let(:stat) { user.user_stat }
 
+    it 'always expires redis key' do
+      # this tests implementation which is not 100% ideal
+      # that said, redis key leaks are not good
+      stat.update_time_read!
+      ttl = Discourse.redis.ttl(UserStat.last_seen_key(user.id))
+      expect(ttl).to be > 0
+      expect(ttl).to be <= UserStat::MAX_TIME_READ_DIFF
+    end
+
     it 'makes no changes if nothing is cached' do
-      stat.expects(:last_seen_cached).returns(nil)
+      Discourse.redis.del(UserStat.last_seen_key(user.id))
       stat.update_time_read!
       stat.reload
       expect(stat.time_read).to eq(0)
     end
 
     it 'makes a change if time read is below threshold' do
-      stat.expects(:last_seen_cached).returns(Time.now - 10)
+      freeze_time
+      UserStat.cache_last_seen(user.id, (Time.now - 10).to_f)
       stat.update_time_read!
       stat.reload
       expect(stat.time_read).to eq(10)
     end
 
     it 'makes no change if time read is above threshold' do
+      freeze_time
+
       t = Time.now - 1 - UserStat::MAX_TIME_READ_DIFF
-      stat.expects(:last_seen_cached).returns(t)
+      UserStat.cache_last_seen(user.id, t.to_f)
+
       stat.update_time_read!
       stat.reload
       expect(stat.time_read).to eq(0)
@@ -103,5 +171,55 @@ describe UserStat do
 
   end
 
+  describe 'update_distinct_badge_count' do
+    fab!(:user) { Fabricate(:user) }
+    let(:stat) { user.user_stat }
+    fab!(:badge1) { Fabricate(:badge) }
+    fab!(:badge2) { Fabricate(:badge) }
 
+    it "updates counts correctly" do
+      expect(stat.reload.distinct_badge_count).to eq(0)
+      BadgeGranter.grant(badge1, user)
+      expect(stat.reload.distinct_badge_count).to eq(1)
+      BadgeGranter.grant(badge1, user)
+      expect(stat.reload.distinct_badge_count).to eq(1)
+      BadgeGranter.grant(badge2, user)
+      expect(stat.reload.distinct_badge_count).to eq(2)
+      user.reload.user_badges.destroy_all
+      expect(stat.reload.distinct_badge_count).to eq(0)
+    end
+
+    it "can update counts for all users simultaneously" do
+      user2 = Fabricate(:user)
+      stat2 = user2.user_stat
+
+      BadgeGranter.grant(badge1, user)
+      BadgeGranter.grant(badge1, user)
+      BadgeGranter.grant(badge2, user)
+
+      BadgeGranter.grant(badge1, user2)
+
+      # Set some clearly incorrect values
+      stat.update(distinct_badge_count: 999)
+      stat2.update(distinct_badge_count: 999)
+
+      UserStat.ensure_consistency!
+
+      expect(stat.reload.distinct_badge_count).to eq(2)
+      expect(stat2.reload.distinct_badge_count).to eq(1)
+    end
+
+    it "ignores disabled badges" do
+      BadgeGranter.grant(badge1, user)
+      BadgeGranter.grant(badge2, user)
+      expect(stat.reload.distinct_badge_count).to eq(2)
+
+      badge2.update(enabled: false)
+      expect(stat.reload.distinct_badge_count).to eq(1)
+
+      badge2.update(enabled: true)
+      expect(stat.reload.distinct_badge_count).to eq(2)
+    end
+
+  end
 end

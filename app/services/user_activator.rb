@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class UserActivator
   attr_reader :user, :request, :session, :cookies, :message
 
@@ -16,6 +18,10 @@ class UserActivator
     @message = activator.activate
   end
 
+  def success_message
+    activator.success_message
+  end
+
   private
 
   def activator
@@ -23,10 +29,12 @@ class UserActivator
   end
 
   def factory
-    if SiteSetting.must_approve_users?
-      ApprovalActivator
-    elsif !user.active?
+    invite = Invite.find_by(email: Email.downcase(@user.email))
+
+    if !user.active?
       EmailActivator
+    elsif SiteSetting.must_approve_users? && !(invite.present? && invite.redeemable?)
+      ApprovalActivator
     else
       LoginActivator
     end
@@ -36,18 +44,30 @@ end
 
 class ApprovalActivator < UserActivator
   def activate
+    success_message
+  end
+
+  def success_message
     I18n.t("login.wait_approval")
   end
 end
 
 class EmailActivator < UserActivator
   def activate
-    Jobs.enqueue(:user_email,
+    email_token = user.email_tokens.unconfirmed.active.first
+    email_token = user.email_tokens.create(email: user.email) if email_token.nil?
+
+    Jobs.enqueue(:critical_user_email,
       type: :signup,
       user_id: user.id,
-      email_token: user.email_tokens.first.token
+      email_token: email_token.token
     )
-    I18n.t("login.activate_email", email: user.email)
+
+    success_message
+  end
+
+  def success_message
+    I18n.t("login.activate_email", email: Rack::Utils.escape_html(user.email))
   end
 end
 
@@ -57,6 +77,10 @@ class LoginActivator < UserActivator
   def activate
     log_on_user(user)
     user.enqueue_welcome_message('welcome_user')
+    success_message
+  end
+
+  def success_message
     I18n.t("login.active")
   end
 end

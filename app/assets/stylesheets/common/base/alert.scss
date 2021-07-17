@@ -1,45 +1,42 @@
 .alert {
-  padding: 8px 35px 8px 14px;
-  background-color: scale-color($danger, $lightness: 75%);
-  color: #c09853;
+  padding: 0.5em 2.5em 0.5em 1em;
+  background-color: var(--danger-low);
+  color: var(--primary);
+  position: relative;
+  margin-bottom: 1em;
 
   .close {
-    position: relative;
-    top: -2px;
-    right: -21px;
-    line-height: 18px;
-    float: right;
-    font-size: 1.429em;
-    font-weight: bold;
-    line-height: 18px;
-    color: $primary;
-    opacity: 0.2;
-    filter: alpha(opacity = 20);
-    @include hover {
-      color: $primary;
-      text-decoration: none;
-      cursor: pointer;
-      opacity: 0.4;
-      filter: alpha(opacity = 40);
+    font-size: $font-up-3;
+    position: absolute;
+    top: 0.265em;
+    right: 0.66em;
+    .d-icon {
+      color: var(--primary-medium);
     }
   }
-  button.close {
-    padding: 0;
-    cursor: pointer;
-    background: transparent;
-    border: 0;
-    -webkit-appearance: none;
-  }
+
   &.alert-success {
-    background-color:  dark-light-diff($success, $secondary, 50%, -60%);
-    color: $primary;
+    background-color: var(--success-low);
+    color: var(--primary);
   }
   &.alert-error {
-    background-color:  rgba(dark-light-diff($danger, $secondary, 50%, -60%), .5);
-    color: $primary;
+    background-color: var(--danger-low);
+    color: var(--primary);
+  }
+  &.alert-warning {
+    background-color: var(--highlight-low);
+    color: var(--primary);
   }
   &.alert-info {
-    background-color: dark-light-diff($tertiary, $secondary, 85%, -65%);
-    color: $primary;
+    background-color: var(--tertiary-low);
+    color: var(--primary);
+    &.clickable {
+      color: var(--tertiary);
+      z-index: z("base");
+    }
   }
+}
+
+a.alert.clickable {
+  display: flex;
 }

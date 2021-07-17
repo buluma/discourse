@@ -1,14 +1,16 @@
+<%- hijack_if_ember_cli! -%>
 <!DOCTYPE html>
-<!--[if IE 9]><html lang="<%= SiteSetting.default_locale %>" class="ie9 <%= html_classes %>"><![endif]-->
-<!--[if (!IE 9) | (!IE)]><!--><html lang="<%= SiteSetting.default_locale %>" class="<%= html_classes %>"><!--<![endif]-->
+<html lang="<%= html_lang %>" class="<%= html_classes %>">
   <head>
     <meta charset="utf-8">
-    <title><%= content_for?(:title) ? yield(:title) + ' - ' + SiteSetting.title : SiteSetting.title %></title>
+    <title><%= content_for?(:title) ? yield(:title) : SiteSetting.title %></title>
     <meta name="description" content="<%= @description_meta || SiteSetting.site_description %>">
+    <meta name="discourse_theme_id" content="<%= theme_id %>">
+    <meta name="discourse_current_homepage" content="<%= current_homepage %>">
     <%= render partial: "layouts/head" %>
-    <%= render partial: "common/special_font_face" %>
-    <%= render partial: "common/discourse_stylesheet" %>
     <%= discourse_csrf_tags %>
+
+    <%= render partial: "common/discourse_stylesheet" %>
 
     <%- if SiteSetting.enable_escaped_fragments? %>
       <meta name="fragment" content="!">
@@ -18,37 +20,65 @@
       <meta name="shared_session_key" content="<%= shared_session_key %>">
     <%- end %>
 
-    <%= script "preload_store" %>
-    <%= script "locales/#{I18n.locale}" %>
-    <%= script "vendor" %>
-    <%= script "application" %>
+    <%= build_plugin_html 'server:before-script-load' %>
+
+    <%= preload_script 'browser-detect' %>
+
+    <%= preload_script "locales/#{I18n.locale}" %>
+    <%- if ExtraLocalesController.client_overrides_exist? %>
+      <%= preload_script_url ExtraLocalesController.url('overrides') %>
+    <%- end %>
+    <%= preload_script "vendor" %>
+    <%= preload_script "application" %>
+    <%- Discourse.find_plugin_js_assets(include_official: allow_plugins?, include_unofficial: allow_third_party_plugins?, request: request).each do |file| %>
+      <%= preload_script file %>
+    <%- end %>
     <%- if staff? %>
-      <%= script "admin"%>
+      <%= preload_script_url ExtraLocalesController.url('admin') %>
+      <%= preload_script "admin" %>
     <%- end %>
 
     <%- unless customization_disabled? %>
-      <%= raw SiteCustomization.custom_head_tag(session[:preview_style]) %>
+      <%= theme_translations_lookup %>
+      <%= theme_js_lookup %>
+      <%= theme_lookup("head_tag") %>
     <%- end %>
 
+    <%= render_google_tag_manager_head_code %>
     <%= render_google_universal_analytics_code %>
+    <link rel="manifest" href="<%= Discourse.base_path %>/manifest.webmanifest" crossorigin="use-credentials">
+
+    <%- if include_ios_native_app_banner? %>
+        <meta name="apple-itunes-app" content="app-id=<%= SiteSetting.ios_app_id %><%= ios_app_argument %>">
+    <%- end %>
+
 
     <%= yield :head %>
+
+    <%= build_plugin_html 'server:before-head-close' %>
+
+    <%= tag.meta id: 'data-discourse-setup', data: client_side_setup_data %>
+
+    <%- if authentication_data %>
+      <meta id="data-authentication" data-authentication-data="<%= authentication_data %>">
+    <%- end %>
   </head>
 
-  <body>
+  <body class="<%= body_classes %>">
+    <%= render_google_tag_manager_body_code %>
     <noscript data-path="<%= request.env['PATH_INFO'] %>">
       <%= render partial: 'header' %>
-      <div id="main-outlet" class="container">
+      <div id="main-outlet" class="wrap" role="main">
         <!-- preload-content: -->
         <%= yield %>
         <!-- :preload-content -->
-        <footer>
+        <footer class="noscript-footer-nav">
           <nav itemscope itemtype='http://schema.org/SiteNavigationElement'>
             <a href='<%= path "/" %>'><%= t 'home_title' %></a>
-            <%= link_to t('js.filters.categories.title'), main_app.categories_path %>
-            <%= link_to t('guidelines_topic.title'), main_app.guidelines_path %>
-            <%= link_to t('tos_topic.title'), main_app.tos_path %>
-            <%= link_to t('privacy_topic.title'), main_app.privacy_path %>
+            <%= link_to t('js.filters.categories.title'), path("/categories") %>
+            <%= link_to t('guidelines_topic.title'), path("/guidelines") %>
+            <%= link_to t('tos_topic.title'), path("/tos") %>
+            <%= link_to t('privacy_topic.title'), path("/privacy") %>
           </nav>
         </footer>
       </div>
@@ -58,17 +88,16 @@
       </footer>
     </noscript>
 
-    <!--[if IE 9]><script type="text/javascript">ie = "new";</script><![endif]-->
-
     <%- unless customization_disabled? %>
-      <%= SiteCustomization.custom_header(session[:preview_style], mobile_view? ? :mobile : :desktop) %>
+      <%= theme_lookup("header") %>
+    <%- end %>
+
+    <%- if allow_plugins? %>
+      <%= build_plugin_html 'server:header' %>
     <%- end %>
 
     <section id='main'>
     </section>
-
-    <div id='offscreen-content'>
-    </div>
 
     <% unless current_user %>
       <form id='hidden-login-form' method="post" action="<%=main_app.login_path%>" style="display: none;">
@@ -79,22 +108,19 @@
       </form>
     <% end %>
 
-    <%- if @preloaded.present? %>
-      <script>
-      <%- @preloaded.each do |key, json| %>
-        PreloadStore.store("<%= key %>",<%= escape_unicode(json) %>);
-      <% end %>
-      </script>
-    <%- end %>
+    <div class="hidden" id="data-preloaded" data-preloaded="<%= preloaded_json %>"></div>
+    <%= preload_script "start-discourse" %>
 
     <%= yield :data %>
 
-    <%= render :partial => "common/discourse_javascript" %>
-
-    <%= render_google_analytics_code %>
+    <%= preload_script 'browser-update' %>
 
     <%- unless customization_disabled? %>
-      <%= raw SiteCustomization.custom_body_tag(session[:preview_style]) %>
+      <%= theme_lookup("body_tag") %>
+    <%- end %>
+
+    <%- if allow_plugins? %>
+      <%= build_plugin_html 'server:before-body-close' %>
     <%- end %>
   </body>
 </html>

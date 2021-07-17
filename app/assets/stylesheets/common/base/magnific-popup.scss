@@ -6,7 +6,7 @@
 //
 // 1. Default Settings
 // 2. General styles
-//    - Transluscent overlay
+//    - Translucent overlay
 //    - Containers, wrappers
 //    - Cursors
 //    - Helper classes
@@ -23,69 +23,61 @@
 //
 ////////////////////////
 
-
-
 ////////////////////////
 // 1. Default Settings
 ////////////////////////
 
-$overlay-color:                   #0b0b0b !default;
-$overlay-opacity:                 0.8 !default;
-$shadow:                          0 0 8px rgba(0, 0, 0, 0.6) !default; // shadow on image or iframe
-$popup-padding-left:              8px !default; // Padding from left and from right side
-$popup-padding-left-mobile:       6px !default; // Same as above, but is applied when width of window is less than 800px
+$overlay-color: #0b0b0b !default;
+$overlay-opacity: 0.8 !default;
+$shadow: 0 0 8px rgba(0, 0, 0, 0.6) !default; // shadow on image or iframe
+$popup-padding-left: 8px !default; // Padding from left and from right side
+$popup-padding-left-mobile: 6px !default; // Same as above, but is applied when width of window is less than 800px
 
-$z-index-base:                    1040 !default; // Base z-index of popup
-$include-arrows:                  true !default; // include styles for nav arrows
-$controls-opacity:                0.65 !default;
-$controls-color:                  #FFF !default;
-$inner-close-icon-color:          #333 !default;
-$controls-text-color:             #CCC !default; // Color of preloader and "1 of X" indicator
-$controls-text-color-hover:       #FFF !default;
-$IE7support:                      true !default; // Very basic IE7 support
+$z-index-base: 1040 !default; // Base z-index of popup
+$include-arrows: true !default; // include styles for nav arrows
+$controls-opacity: 0.65 !default;
+$controls-color: #fff !default;
+$inner-close-icon-color: #333 !default;
+$controls-text-color: #ccc !default; // Color of preloader and "1 of X" indicator
+$controls-text-color-hover: #fff !default;
 
 // Iframe-type options
-$include-iframe-type:             true !default;
-$iframe-padding-top:              40px !default;
-$iframe-background:               #000 !default;
-$iframe-max-width:                900px !default;
-$iframe-ratio:                    9/16 !default;
+$include-iframe-type: true !default;
+$iframe-padding-top: 40px !default;
+$iframe-background: #000 !default;
+$iframe-max-width: 900px !default;
+$iframe-ratio: 9/16 !default;
 
 // Image-type options
-$include-image-type:              true !default;
-$image-background:                #444 !default;
-$image-padding-top:               40px !default;
-$image-padding-bottom:            40px !default;
+$include-image-type: true !default;
+$image-background: linear-gradient(45deg, #111 0%, #333 100%) !default;
+$image-padding-top: 40px !default;
+$image-padding-bottom: 40px !default;
 $include-mobile-layout-for-image: true !default; // Removes paddings from top and bottom
 
 // Image caption options
-$caption-title-color:             #F3F3F3 !default;
-$caption-subtitle-color:          #BDBDBD !default;
+$caption-title-color: #f3f3f3 !default;
+$caption-subtitle-color: #bdbdbd !default;
 
 // A11y
-$use-visuallyhidden:              false !default; // Hide content from browsers, but make it available for screen readers
-
-
+$use-visuallyhidden: false !default; // Hide content from browsers, but make it available for screen readers
 
 ////////////////////////
 // 2. General styles
 ////////////////////////
 
-// Transluscent overlay
+// Translucent overlay
 .mfp-bg {
   top: 0;
   left: 0;
   width: 100%;
   height: 100%;
-  z-index: $z-index-base + 2;
+  z-index: z("modal", "popover");
   overflow: hidden;
   position: fixed;
 
   background: $overlay-color;
   opacity: $overlay-opacity;
-  @if $IE7support {
-    filter: unquote("alpha(opacity=#{$overlay-opacity*100})");
-  }
 }
 
 // Wrapper for popup
@@ -94,7 +86,7 @@ $use-visuallyhidden:              false !default; // Hide content from browsers,
   left: 0;
   width: 100%;
   height: 100%;
-  z-index: $z-index-base + 3;
+  z-index: z("modal", "popover") + 1;
   position: fixed;
   outline: 0 !important;
   -webkit-backface-visibility: hidden; // fixes webkit bug that can cause "false" scrollbar
@@ -117,7 +109,7 @@ $use-visuallyhidden:              false !default; // Hide content from browsers,
 // Vertical centerer helper
 .mfp-container {
   &:before {
-    content: '';
+    content: "";
     display: inline-block;
     height: 100%;
     vertical-align: middle;
@@ -155,7 +147,8 @@ $use-visuallyhidden:              false !default; // Hide content from browsers,
   cursor: progress;
 }
 .mfp-zoom-out-cur {
-  &, .mfp-image-holder .mfp-close {
+  &,
+  .mfp-image-holder .mfp-close {
     cursor: -moz-zoom-out;
     cursor: -webkit-zoom-out;
     cursor: zoom-out;
@@ -177,9 +170,7 @@ $use-visuallyhidden:              false !default; // Hide content from browsers,
 .mfp-arrow,
 .mfp-preloader,
 .mfp-counter {
-  -webkit-user-select:none;
-  -moz-user-select: none;
-  user-select: none;
+  @include unselectable;
 }
 
 // Hide the image during the loading
@@ -207,7 +198,6 @@ $use-visuallyhidden:              false !default; // Hide content from browsers,
     display: none !important;
   }
 }
-
 
 ////////////////////////
 // 3. Appearance
@@ -262,41 +252,32 @@ button {
     box-shadow: none;
   }
   &::-moz-focus-inner {
-      padding: 0;
-      border: 0
+    padding: 0;
+    border: 0;
   }
 }
-
 
 // Close icon
 .mfp-close {
   width: 44px;
   height: 44px;
-  line-height: 44px;
-
+  line-height: $line-height-large;
   position: absolute;
   right: 0;
   top: 0;
   text-decoration: none;
   text-align: center;
   opacity: $controls-opacity;
-  @if $IE7support {
-    filter: unquote("alpha(opacity=#{$controls-opacity*100})");
-  }
   padding: 0 0 18px 10px;
   color: $controls-color;
-
   font-style: normal;
-  font-size: 2em;
+  font-size: $font-up-5;
   font-family: Arial, Baskerville, monospace;
 
   &:hover,
   &:focus {
     opacity: 1;
     outline: 0;
-    @if $IE7support {
-      filter: unquote("alpha(opacity=#{1*100})");
-    }
   }
 
   &:active {
@@ -325,8 +306,8 @@ button {
   top: 0;
   right: 0;
   color: $controls-text-color;
-  font-size: 0.857em;
-  line-height: 18px;
+  font-size: $font-down-1;
+  line-height: $line-height-medium;
 }
 
 // Navigation arrows
@@ -334,16 +315,12 @@ button {
   .mfp-arrow {
     position: absolute;
     opacity: $controls-opacity;
-    @if $IE7support {
-      filter: unquote("alpha(opacity=#{$controls-opacity*100})");
-    }
-    margin: 0;
     top: 50%;
-    margin-top: -55px;
+    margin: -55px 0 0;
     padding: 0;
     width: 90px;
     height: 110px;
-    -webkit-tap-highlight-color: rgba(0,0,0,0);
+    -webkit-tap-highlight-color: rgba(0, 0, 0, 0);
     &:active {
       margin-top: -54px;
     }
@@ -351,15 +328,12 @@ button {
     &:focus {
       outline: 0;
       opacity: 1;
-      @if $IE7support {
-        filter: unquote("alpha(opacity=#{1*100})");
-      }
     }
     &:before,
     &:after,
     .mfp-b,
     .mfp-a {
-      content: '';
+      content: "";
       display: block;
       width: 0;
       height: 0;
@@ -373,10 +347,9 @@ button {
 
     &:after,
     .mfp-a {
-
       border-top-width: 13px;
       border-bottom-width: 13px;
-      top:8px;
+      top: 8px;
     }
 
     &:before,
@@ -384,7 +357,6 @@ button {
       border-top-width: 21px;
       border-bottom-width: 21px;
     }
-
   }
 
   .mfp-arrow-left {
@@ -392,7 +364,7 @@ button {
 
     &:after,
     .mfp-a {
-      border-right: 17px solid #FFF;
+      border-right: 17px solid #fff;
       margin-left: 31px;
     }
     &:before,
@@ -406,8 +378,8 @@ button {
     right: 0;
     &:after,
     .mfp-a {
-      border-left: 17px solid #FFF;
-      margin-left: 39px
+      border-left: 17px solid #fff;
+      margin-left: 39px;
     }
     &:before,
     .mfp-b {
@@ -415,8 +387,6 @@ button {
     }
   }
 }
-
-
 
 // Iframe content type
 @if $include-iframe-type {
@@ -450,11 +420,8 @@ button {
   }
 }
 
-
-
 // Image content type
 @if $include-image-type {
-
   /* Main image in popup */
   img {
     &.mfp-img {
@@ -475,7 +442,7 @@ button {
   .mfp-figure {
     line-height: 0;
     &:after {
-      content: '';
+      content: "";
       position: absolute;
       left: 0;
       top: $image-padding-top;
@@ -491,8 +458,8 @@ button {
     small {
       color: $caption-subtitle-color;
       display: block;
-      font-size: 0.857em;
-      line-height: 14px;
+      font-size: $font-down-1;
+      line-height: $line-height-medium;
     }
     figure {
       margin: 0;
@@ -508,15 +475,13 @@ button {
   }
   .mfp-title {
     text-align: left;
-    line-height: 18px;
+    line-height: $line-height-medium;
     color: $caption-title-color;
     word-wrap: break-word;
     padding-right: 36px; // leave some space for counter at right side
 
     // add the download icon
-    a.image-source-link:before {
-      content: "\f019";
-      font-family: FontAwesome;
+    a.image-source-link .d-icon {
       padding-right: 5px;
     }
   }
@@ -535,9 +500,9 @@ button {
     }
   }
 
-
   @if $include-mobile-layout-for-image {
-    @media all and (max-width: 800px) and (orientation:landscape), screen and (max-height: 300px) {
+    @media all and (max-width: 800px) and (orientation: landscape),
+      screen and (max-height: 300px) {
       /**
        * Remove all paddings around the image on small screen
        */
@@ -563,7 +528,7 @@ button {
           }
         }
         .mfp-bottom-bar {
-          background: rgba(0,0,0,0.6);
+          background: rgba(0, 0, 0, 0.6);
           bottom: 0;
           margin: 0;
           top: auto;
@@ -585,7 +550,7 @@ button {
           right: 0;
           width: 35px;
           height: 35px;
-          line-height: 35px;
+          line-height: $line-height-large;
           background: rgba(0, 0, 0, 0.6);
           position: fixed;
           text-align: center;
@@ -596,13 +561,10 @@ button {
   }
 }
 
-
-
 // Scale navigation arrows and reduce padding from sides
 @media all and (max-width: 900px) {
   .mfp-arrow {
-    transform: scale(0.75);
-    -webkit-transform: scale(0.75);
+    @include transform(scale(0.75));
   }
   .mfp-arrow-left {
     transform-origin: 0;
@@ -618,59 +580,26 @@ button {
   }
 }
 
-
-
-// IE7 support
-// Styles that make popup look nicier in old IE
-@if $IE7support {
-  .mfp-ie7 {
-    .mfp-img {
-      padding: 0;
-    }
-    .mfp-bottom-bar {
-      width: 600px;
-      left: 50%;
-      margin-left: -300px;
-      margin-top: 5px;
-      padding-bottom: 5px;
-    }
-    .mfp-container {
-      padding: 0;
-    }
-    .mfp-content {
-      padding-top: 44px;
-    }
-    .mfp-close {
-      top: 0;
-      right: 0;
-      padding-top: 0;
-    }
-  }
-}
-
-
 .mfp-zoom-in {
   /* start state */
   .mfp-content {
     opacity: 0;
-    transition: all .2s;
-    -webkit-transform: scale(.8);
-        -ms-transform: scale(.8);
-            transform: scale(.8);
+    transition: all 0.2s;
+    -webkit-transform: scale(0.8);
+    -ms-transform: scale(0.8);
+    transform: scale(0.8);
   }
 
   &.mfp-bg {
     opacity: 0;
-    transition: all .3s ease-out;
+    transition: all 0.3s ease-out;
   }
 
   /* animate in */
   &.mfp-ready {
     .mfp-content {
       opacity: 1;
-      -webkit-transform: scale(1);
-          -ms-transform: scale(1);
-              transform: scale(1);
+      @include transform(scale(1));
     }
     &.mfp-bg {
       opacity: 0.8;
@@ -679,11 +608,8 @@ button {
 
   /* animate out */
   &.mfp-removing {
-
     .mfp-content {
-      -webkit-transform: scale(.8);
-          -ms-transform: scale(.8);
-              transform: scale(.8);
+      @include transform(scale(0.8));
       opacity: 0;
     }
     &.mfp-bg {
@@ -696,6 +622,9 @@ button {
   &.mfp-wrap {
     overflow-y: auto !important;
     overflow-x: auto !important;
+  }
+  .mfp-figure {
+    overflow: auto;
   }
   .mfp-img {
     max-width: none;

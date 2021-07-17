@@ -1,30 +1,50 @@
+# frozen_string_literal: true
+
 require "mysql2"
 require File.expand_path(File.dirname(__FILE__) + "/base.rb")
 
+# Before running this script, paste these lines into your shell,
+# then use arrow keys to edit the values
+=begin
+export DB_HOST="localhost"
+export DB_NAME="mybb"
+export DB_PW=""
+export DB_USER="root"
+export TABLE_PREFIX="mybb_"
+export BASE="" #
+=end
+
 # Call it like this:
-#   RAILS_ENV=production bundle exec ruby script/import_scripts/mybb.rb
+#   RAILS_ENV=production ruby script/import_scripts/mybb.rb
 class ImportScripts::MyBB < ImportScripts::Base
 
-  MYBB_DB = "mybb_db"
-  TABLE_PREFIX = "mybb_"
+  DB_HOST ||= ENV['DB_HOST'] || "localhost"
+  DB_NAME ||= ENV['DB_NAME'] || "mybb"
+  DB_PW ||= ENV['DB_PW'] || ""
+  DB_USER ||= ENV['DB_USER'] || "root"
+  TABLE_PREFIX ||= ENV['TABLE_PREFIX'] || "mybb_"
   BATCH_SIZE = 1000
+  BASE = ""
+  QUIET = true
 
   def initialize
     super
 
     @client = Mysql2::Client.new(
-      host: "localhost",
-      username: "root",
-      #password: "",
-      database: MYBB_DB
+      host: DB_HOST,
+      username: DB_USER,
+      password: DB_PW,
+      database: DB_NAME
     )
   end
 
   def execute
+    SiteSetting.disable_emails = "non-staff"
     import_users
     import_categories
     import_posts
     import_private_messages
+    create_permalinks
     suspend_users
   end
 
@@ -48,6 +68,8 @@ class ImportScripts::MyBB < ImportScripts::Base
 
       break if results.size < 1
 
+      next if all_records_exist? :users, results.map { |u| u["id"].to_i }
+
       create_users(results, total: total_count, offset: offset) do |user|
         { id: user['id'],
           email: user['email'],
@@ -67,7 +89,7 @@ class ImportScripts::MyBB < ImportScripts::Base
     ")
 
     create_categories(results) do |row|
-      h = {id: row['id'], name: CGI.unescapeHTML(row['name']), description: CGI.unescapeHTML(row['description'])}
+      h = { id: row['id'], name: CGI.unescapeHTML(row['name']), description: CGI.unescapeHTML(row['description']) }
       if row['parent_id'].to_i > 0
         h[:parent_category_id] = category_id_from_imported_category_id(row['parent_id'])
       end
@@ -99,6 +121,8 @@ class ImportScripts::MyBB < ImportScripts::Base
       ")
 
       break if results.size < 1
+
+      next if all_records_exist? :posts, results.map { |m| m['id'].to_i }
 
       create_posts(results, total: total_count, offset: offset) do |m|
         skip = false
@@ -149,8 +173,41 @@ class ImportScripts::MyBB < ImportScripts::Base
     puts '', "banned users are not implemented"
   end
 
+  # Discourse usernames don't allow spaces
+  def convert_username(username, post_id)
+    count = 0
+    username.gsub!(/\s+/) { |a| count += 1; '_' }
+    # Warn on MyBB bug that places post text in the quote line - http://community.mybb.com/thread-180526.html
+    if count > 5
+      puts "Warning: probably incorrect quote in post #{post_id}"
+    end
+    username
+  end
+
+  # Take an original post id and return the migrated topic id and post number for it
+  def post_id_to_post_num_and_topic(quoted_post_id, post_id)
+    quoted_post_id_from_imported = post_id_from_imported_post_id(quoted_post_id.to_i)
+    if quoted_post_id_from_imported
+      begin
+        post = Post.find(quoted_post_id_from_imported)
+        "post:#{post.post_number}, topic:#{post.topic_id}"
+      rescue
+        puts "Could not find migrated post #{quoted_post_id_from_imported} quoted by original post #{post_id} as #{quoted_post_id}"
+        ""
+      end
+    else
+      puts "Original post #{post_id} quotes nonexistent post #{quoted_post_id}"
+      ""
+    end
+  end
+
   def process_mybb_post(raw, import_id)
     s = raw.dup
+
+    # convert the quote line
+    s.gsub!(/\[quote='([^']+)'.*?pid='(\d+).*?\]/) {
+      "[quote=\"#{convert_username($1, import_id)}, " + post_id_to_post_num_and_topic($2, import_id) + '"]'
+    }
 
     # :) is encoded as <!-- s:) --><img src="{SMILIES_PATH}/icon_e_smile.gif" alt=":)" title="Smile" /><!-- s:) -->
     s.gsub!(/<!-- s(\S+) -->(?:.*)<!-- s(?:\S+) -->/, '\1')
@@ -175,6 +232,70 @@ class ImportScripts::MyBB < ImportScripts::Base
     s.gsub!(/\[http(s)?:\/\/(www\.)?/, '[')
 
     s
+  end
+
+  def create_permalinks
+    puts '', 'Creating redirects...', ''
+
+    SiteSetting.permalink_normalizations = '/(\\w+)-(\\d+)[-.].*/\\1-\\2.html'
+    puts '', 'Users...', ''
+    total_users = User.count
+    start_time = Time.now
+    count = 0
+    User.find_each do |u|
+      ucf = u.custom_fields
+      count += 1
+      if ucf && ucf["import_id"] && ucf["import_username"]
+        Permalink.create(url: "#{BASE}/user-#{ucf['import_id']}.html", external_url: "/u/#{u.username}") rescue nil
+      end
+      print_status(count, total_users, start_time)
+    end
+
+    puts '', 'Categories...', ''
+    total_categories = Category.count
+    start_time = Time.now
+    count = 0
+    Category.find_each do |cat|
+      ccf = cat.custom_fields
+      count += 1
+      next unless id = ccf["import_id"]
+      unless QUIET
+        puts ("forum-#{id}.html --> /c/#{cat.id}")
+      end
+      Permalink.create(url: "#{BASE}/forum-#{id}.html", category_id: cat.id) rescue nil
+      print_status(count, total_categories, start_time)
+    end
+
+    puts '', 'Topics...', ''
+    total_posts = Post.count
+    start_time = Time.now
+    count = 0
+    puts '', 'Posts...', ''
+    batches(BATCH_SIZE) do |offset|
+      results = mysql_query("
+        SELECT p.pid id,
+               p.tid topic_id
+          FROM #{TABLE_PREFIX}posts p,
+               #{TABLE_PREFIX}threads t
+         WHERE p.tid = t.tid
+           AND t.firstpost=p.pid
+      ORDER BY p.dateline
+         LIMIT #{BATCH_SIZE}
+        OFFSET #{offset};
+      ")
+      break if results.size < 1
+      results.each do |post|
+        count += 1
+        if topic = topic_lookup_from_imported_post_id(post['id'])
+          id = post['topic_id']
+          Permalink.create(url: "#{BASE}/thread-#{id}.html", topic_id: topic[:topic_id]) rescue nil
+          unless QUIET
+            puts ("#{BASE}/thread-#{id}.html --> http://localhost:3000/t/#{topic[:topic_id]}")
+          end
+          print_status(count, total_posts, start_time)
+        end
+      end
+    end
   end
 
   def mysql_query(sql)

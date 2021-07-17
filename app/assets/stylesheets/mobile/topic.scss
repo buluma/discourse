@@ -1,4 +1,6 @@
-.post-info a {color: #aaa;}
+.post-info a {
+  color: var(--primary-medium);
+}
 
 .topic-meta-data-inside {
   float: right;
@@ -6,79 +8,66 @@
   margin-right: 5px;
 }
 
-
-.post-info  {
+.post-info {
   display: inline-block;
 }
 
-.edits {margin-right: 5px;}
-
 #topic-title {
-  margin-bottom: 20px;
-  margin: 0 60px 10px 20px;
   h1 {
-    font-size: 1.5em;
-    line-height: 1.25em;
-    margin: 0;
+    font-size: $font-up-3;
+    line-height: $line-height-medium;
     a {
-      color: $primary;
+      color: var(--primary);
       vertical-align: middle;
+      word-wrap: break-word;
     }
   }
   .title-category-wrapper {
-    margin-top:5px;
+    margin-top: 5px;
   }
-  .private-message-glyph { display: none; }
 }
 
-.private-message-glyph { color: scale-color($primary, $lightness: 75%); }
-.private_message #topic-title .private-message-glyph { display: inline; }
-
-
-/* both blocks that appear under the standard post control buttons */
-.notification-options, .pinned-options {
-  clear: both;
-  float: left;
-  margin-top: 0px;
-  padding-top: 1px;
-}
-
-#topic-closing-info {
-  margin-left: 10px;
-}
-
-.docked #topic-progress {
-  box-shadow: 0 0 3px rbga(0,0,0, .5);
+.progress-back-container {
+  top: -100%; // above parent container + some extra space
 }
 
 #topic-progress-wrapper {
   position: fixed;
-  width: 0;
-  right: 0;
+  right: 10px; // match 10px padding on .wrap
   bottom: 0;
-  z-index: 500;
-  margin-right: 148px;
+  z-index: z("timeline");
+  &:not(.docked) {
+    margin-bottom: env(safe-area-inset-bottom);
+  }
+  html.rtl & {
+    /**
+     * This should be the other way around, but it has to be "wrong" here
+     * because our RTL CSS is generated using the `rtlit` gem which flips
+     * left to right and right to left, so this will be corrected when it
+     * goes through rtlit.
+     */
+    left: unset;
+    right: 1em;
+  }
 }
 
 #topic-progress-expanded {
-  border: 1px solid dark-light-diff($primary, $secondary, 90%, -60%);
+  border: 1px solid var(--primary-low);
   padding: 5px;
-  background: $secondary;
-  box-shadow: 0 0px 2px rgba(0,0,0, .2);
+  background: var(--secondary);
 
   position: absolute;
   bottom: 34px;
-  width: 133px;
-  padding: 5px;
+  width: 135px;
 
   button.full {
     width: 100%;
     margin-bottom: 5px;
-    i {
+    .d-icon {
       display: block;
       margin-top: 2px;
       margin-bottom: 2px;
-      font-size: 1.286em;
+      font-size: $font-up-2;
     }
   }
   .jump-form {
@@ -87,12 +76,15 @@
       width: 45px;
       height: 20px;
       text-align: center;
-      font-size: 1.143em;
+      font-size: $font-up-1;
     }
     button.btn {
       float: right !important;
       width: 55px;
     }
+  }
+  button.btn.jump-prompt {
+    margin: 0;
   }
   button.btn.jump-bottom {
     margin-top: 5px;
@@ -105,42 +97,41 @@
   &.hidden {
     display: none;
   }
-  background-color: $secondary;
-  color: $tertiary;
-  border: 1px solid dark-light-diff($tertiary, $secondary, 85%, -65%);
-  border-bottom: none;
+  background-color: var(--secondary);
+  color: var(--tertiary);
+  border: 1px solid var(--tertiary-low);
   width: 145px;
-  height: 34px;
+  height: 42px;
 
   /* as a big ol' click target, don't let text inside be selected */
   @include unselectable;
 
   .nums {
     position: relative;
-    top: 9px;
+    top: 12px;
     width: 100%;
     text-align: center;
-    z-index: 1;
+    z-index: z("base");
   }
   h4 {
     display: inline;
-    font-size: 1.286em;
-    line-height: 15px;
+    font-size: $font-up-2;
+    line-height: $line-height-small;
   }
-  i.fa {
+  .d-icon {
     position: absolute;
     right: 8px;
     bottom: 9px;
-    z-index: 1;
+    z-index: z("base");
   }
   .bg {
     position: absolute;
     top: 0;
     bottom: 0;
     width: 0;
-    border-right: 1px solid  dark-light-diff($tertiary, $secondary, 85%, -65%);
-    background-color:  dark-light-diff($tertiary, $secondary, 85%, -65%);
-    transition: width .75s;
+    border-right: 1px solid var(--tertiary-low);
+    background-color: var(--tertiary-low);
+    transition: width 0.75s;
   }
 }
 
@@ -149,8 +140,8 @@
   width: 90%;
   margin-left: auto;
   margin-right: auto;
-  font-size: 1.714em;
-  line-height: 1.1em;
+  font-size: $font-up-4;
+  line-height: $line-height-medium;
 
   .topic-retry {
     display: block;
@@ -164,26 +155,72 @@
   position: absolute;
 }
 
-.post-cloak:last-of-type {padding-bottom: 40px;}
+.topic-post:last-of-type {
+  padding-bottom: 40px;
+}
 
-.heatmap-high {color: scale-color($danger, $lightness: -25%) !important;}
-.heatmap-med {color: $danger !important;}
-.heatmap-low {color: scale-color($danger, $lightness: 25%) !important;}
-
-sup sup, sub sup, sup sub, sub sub { top: 0; }
+sup sup,
+sub sup,
+sup sub,
+sub sub {
+  top: 0;
+}
 
 // inline editing of title on mobile
-.title-wrapper {
+#topic-title .title-wrapper {
+  position: relative;
+  float: none;
+  width: 100%;
+
   input#edit-title {
-    width: 95%;
+    width: 100%;
+  }
+
+  .select-kit.combo-box.category-chooser {
+    width: 100%;
+    margin-top: 0;
+  }
+}
+
+// make mobile timeline top and bottom dates easier to select
+.topic-timeline {
+  .start-date,
+  .now-date {
+    font-size: $font-up-1;
     padding: 5px;
   }
-  .btn-small {
-    padding: 8px 12px;
-    margin: 6px 6px 0 0;
+  .topic-category {
+    margin-bottom: 0.5rem;
   }
-  .select2-container {
-    margin-top: 8px;
-    width: 95% !important;
+}
+
+.topic-footer-main-buttons {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+@media screen and (max-height: 600px) {
+  .topic-admin-popup-menu {
+    box-sizing: border-box;
+    padding: 0.25em;
+    width: unset;
+    ul {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+
+      @media screen and (max-width: 550px) {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .popup-menu-btn {
+        @include ellipsis;
+      }
+
+      li {
+        border: 0;
+        min-width: 0;
+      }
+    }
   }
 }

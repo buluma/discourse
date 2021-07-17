@@ -1,16 +1,10 @@
-<html>
-  <head>
-    <title>Admin Login</title>
-  </head>
-  <body>
-    <% if @message %>
-      <%= @message %>
-    <% else %>
-      <%=form_tag({}, method: :put) do %>
-        <%= label_tag(:email, t('admin_login.email_input')) %>
-        <%= text_field_tag(:email) %><br><br>
-        <%= submit_tag t('admin_login.submit_button') %>
-      <% end %>
-    <% end %>
-  </body>
-</html>
+<% if @message %>
+  <%= @message %>
+  <% if @error %><p><%= @error %></p><% end %>
+<% else %>
+  <%=form_tag(u_admin_login_path, method: :put) do %>
+    <%= label_tag(:email, t('admin_login.email_input')) %>
+    <%= text_field_tag(:email, nil, autofocus: true) %><br><br>
+    <%= submit_tag t('admin_login.submit_button'), class: "btn btn-primary" %>
+  <% end %>
+<% end %>

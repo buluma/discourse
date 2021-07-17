@@ -1,10 +1,8 @@
-require_dependency 'enum'
+# frozen_string_literal: true
 
 class InvalidTrustLevel < StandardError; end
 
 class TrustLevel
-
-  attr_reader :id, :name
 
   class << self
 
@@ -14,13 +12,7 @@ class TrustLevel
     end
 
     def levels
-      @levels ||= Enum.new(:newuser, :basic, :regular, :leader, :elder, start: 0)
-    end
-
-    def all
-      levels.map do |name_key, id|
-        TrustLevel.new(name_key, id)
-      end
+      @levels ||= Enum.new(:newuser, :basic, :member, :regular, :leader, start: 0)
     end
 
     def valid?(level)
@@ -35,15 +27,9 @@ class TrustLevel
       (current_level || 0) >= level
     end
 
-  end
-
-  def initialize(name_key, id)
-    @name = I18n.t("trust_levels.#{name_key}.title")
-    @id = id
-  end
-
-  def serializable_hash
-    { id: @id, name: @name }
+    def name(level)
+      I18n.t("js.trust_levels.names.#{levels[level]}")
+    end
   end
 
 end

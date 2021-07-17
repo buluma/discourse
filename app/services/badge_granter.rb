@@ -1,17 +1,116 @@
-class BadgeGranter
+# frozen_string_literal: true
 
-  def initialize(badge, user, opts={})
+class BadgeGranter
+  class GrantError < StandardError; end
+
+  def self.disable_queue
+    @queue_disabled = true
+  end
+
+  def self.enable_queue
+    @queue_disabled = false
+  end
+
+  def initialize(badge, user, opts = {})
     @badge, @user, @opts = badge, user, opts
     @granted_by = opts[:granted_by] || Discourse.system_user
     @post_id = opts[:post_id]
   end
 
-  def self.grant(badge, user, opts={})
+  def self.grant(badge, user, opts = {})
     BadgeGranter.new(badge, user, opts).grant
   end
 
+  def self.enqueue_mass_grant_for_users(badge, emails: [], usernames: [], ensure_users_have_badge_once: true)
+    emails = emails.map(&:downcase)
+    usernames = usernames.map(&:downcase)
+    usernames_map_to_ids = {}
+    emails_map_to_ids = {}
+    if usernames.size > 0
+      usernames_map_to_ids = User.where(username_lower: usernames).pluck(:username_lower, :id).to_h
+    end
+    if emails.size > 0
+      emails_map_to_ids = User.with_email(emails).pluck('LOWER(user_emails.email)', :id).to_h
+    end
+
+    count_per_user = {}
+    unmatched = Set.new
+    (usernames + emails).each do |entry|
+      id = usernames_map_to_ids[entry] || emails_map_to_ids[entry]
+      if id.blank?
+        unmatched << entry
+        next
+      end
+
+      if ensure_users_have_badge_once
+        count_per_user[id] = 1
+      else
+        count_per_user[id] ||= 0
+        count_per_user[id] += 1
+      end
+    end
+
+    existing_owners_ids = []
+    if ensure_users_have_badge_once
+      existing_owners_ids = UserBadge.where(badge: badge).distinct.pluck(:user_id)
+    end
+    count_per_user.each do |user_id, count|
+      next if ensure_users_have_badge_once && existing_owners_ids.include?(user_id)
+
+      Jobs.enqueue(
+        :mass_award_badge,
+        user: user_id,
+        badge: badge.id,
+        count: count
+      )
+    end
+
+    {
+      unmatched_entries: unmatched.to_a,
+      matched_users_count: count_per_user.size,
+      unmatched_entries_count: unmatched.size
+    }
+  end
+
+  def self.mass_grant(badge, user, count:)
+    return if !badge.enabled?
+
+    raise ArgumentError.new("count can't be less than 1") if count < 1
+
+    UserBadge.transaction do
+      DB.exec(<<~SQL * count, now: Time.zone.now, system: Discourse.system_user.id, user_id: user.id, badge_id: badge.id)
+        INSERT INTO user_badges
+        (granted_at, created_at, granted_by_id, user_id, badge_id, seq)
+        VALUES
+        (
+          :now,
+          :now,
+          :system,
+          :user_id,
+          :badge_id,
+          COALESCE((
+            SELECT MAX(seq) + 1
+            FROM user_badges
+            WHERE badge_id = :badge_id AND user_id = :user_id
+          ), 0)
+        );
+      SQL
+      notification = send_notification(user.id, user.username, user.locale, badge)
+
+      DB.exec(<<~SQL, notification_id: notification.id, user_id: user.id, badge_id: badge.id)
+        UPDATE user_badges
+        SET notification_id = :notification_id
+        WHERE notification_id IS NULL AND user_id = :user_id AND badge_id = :badge_id
+      SQL
+
+      UserBadge.update_featured_ranks!(user.id)
+    end
+  end
+
   def grant
-    return if @granted_by and !Guardian.new(@granted_by).can_grant_badges?(@user)
+    return if @granted_by && !Guardian.new(@granted_by).can_grant_badges?(@user)
+    return unless @badge.present? && @badge.enabled?
+    return if @user.blank?
 
     find_by = { badge_id: @badge.id, user_id: @user.id }
 
@@ -32,19 +131,20 @@ class BadgeGranter
         user_badge = UserBadge.create!(badge: @badge,
                                        user: @user,
                                        granted_by: @granted_by,
-                                       granted_at: Time.now,
+                                       granted_at: @opts[:created_at] || Time.now,
                                        post_id: @post_id,
                                        seq: seq)
+
+        return unless SiteSetting.enable_badges
 
         if @granted_by != Discourse.system_user
           StaffActionLogger.new(@granted_by).log_badge_grant(user_badge)
         end
 
-        if SiteSetting.enable_badges?
-          notification = @user.notifications.create(
-                  notification_type: Notification.types[:granted_badge],
-                  data: { badge_id: @badge.id, badge_name: @badge.name }.to_json)
-          user_badge.update_attributes notification_id: notification.id
+        skip_new_user_tips = @user.user_option.skip_new_user_tips
+        unless self.class.suppress_notification?(@badge, user_badge.granted_at, skip_new_user_tips)
+          notification = self.class.send_notification(@user.id, @user.username, @user.effective_locale, @badge)
+          user_badge.update!(notification_id: notification.id)
         end
       end
     end
@@ -52,23 +152,44 @@ class BadgeGranter
     user_badge
   end
 
-  def self.revoke(user_badge, options={})
+  def self.revoke(user_badge, options = {})
     UserBadge.transaction do
       user_badge.destroy!
       if options[:revoked_by]
         StaffActionLogger.new(options[:revoked_by]).log_badge_revoke(user_badge)
       end
 
-      # If the user's title is the same as the badge name, remove their title.
-      if user_badge.user.title == user_badge.badge.name
+      # If the user's title is the same as the badge name OR the custom badge name, remove their title.
+      custom_badge_name = TranslationOverride.find_by(translation_key: user_badge.badge.translation_key)&.value
+      user_title_is_badge_name = user_badge.user.title == user_badge.badge.name
+      user_title_is_custom_badge_name = custom_badge_name.present? && user_badge.user.title == custom_badge_name
+
+      if user_title_is_badge_name || user_title_is_custom_badge_name
+        if options[:revoked_by]
+          StaffActionLogger.new(options[:revoked_by]).log_title_revoke(
+            user_badge.user,
+            revoke_reason: 'user title was same as revoked badge name or custom badge name',
+            previous_value: user_badge.user.title
+          )
+        end
         user_badge.user.title = nil
         user_badge.user.save!
       end
     end
   end
 
-  def self.queue_badge_grant(type,opt)
-    return unless SiteSetting.enable_badges
+  def self.revoke_all(badge)
+    custom_badge_names = TranslationOverride.where(translation_key: badge.translation_key).pluck(:value)
+
+    users = User.joins(:user_badges).where(user_badges: { badge_id: badge.id }).where(title: badge.name)
+    users = users.or(User.joins(:user_badges).where(title: custom_badge_names)) unless custom_badge_names.empty?
+    users.update_all(title: nil)
+
+    UserBadge.where(badge: badge).delete_all
+  end
+
+  def self.queue_badge_grant(type, opt)
+    return if !SiteSetting.enable_badges || @queue_disabled
     payload = nil
 
     case type
@@ -98,56 +219,59 @@ class BadgeGranter
       }
     end
 
-    $redis.lpush queue_key, payload.to_json if payload
+    Discourse.redis.lpush queue_key, payload.to_json if payload
   end
 
   def self.clear_queue!
-    $redis.del queue_key
+    Discourse.redis.del queue_key
   end
 
   def self.process_queue!
     limit = 1000
     items = []
-    while limit > 0 && item = $redis.lpop(queue_key)
+    while limit > 0 && item = Discourse.redis.lpop(queue_key)
       items << JSON.parse(item)
       limit -= 1
     end
 
-    items = items.group_by{|i| i["type"]}
+    items = items.group_by { |i| i["type"] }
 
     items.each do |type, list|
-      post_ids = list.map{|i| i["post_ids"]}.flatten.compact.uniq
-      user_ids = list.map{|i| i["user_ids"]}.flatten.compact.uniq
+      post_ids = list.flat_map { |i| i["post_ids"] }.compact.uniq
+      user_ids = list.flat_map { |i| i["user_ids"] }.compact.uniq
 
       next unless post_ids.present? || user_ids.present?
-      find_by_type(type).each{ |badge|
+
+      find_by_type(type).each do |badge|
         backfill(badge, post_ids: post_ids, user_ids: user_ids)
-      }
+      end
     end
   end
 
   def self.find_by_type(type)
-    id = "Badge::Trigger::#{type}".constantize
-    Badge.where(trigger: id)
+    Badge.where(trigger: "Badge::Trigger::#{type}".constantize)
   end
 
   def self.queue_key
-    "badge_queue".freeze
+    "badge_queue"
   end
 
   # Options:
   #   :target_posts - whether the badge targets posts
   #   :trigger - the Badge::Trigger id
   def self.contract_checks!(sql, opts = {})
-    return unless sql.present?
+    return if sql.blank?
+
     if Badge::Trigger.uses_post_ids?(opts[:trigger])
       raise("Contract violation:\nQuery triggers on posts, but does not reference the ':post_ids' array") unless sql.match(/:post_ids/)
       raise "Contract violation:\nQuery triggers on posts, but references the ':user_ids' array" if sql.match(/:user_ids/)
     end
+
     if Badge::Trigger.uses_user_ids?(opts[:trigger])
       raise "Contract violation:\nQuery triggers on users, but does not reference the ':user_ids' array" unless sql.match(/:user_ids/)
       raise "Contract violation:\nQuery triggers on users, but references the ':post_ids' array" if sql.match(/:post_ids/)
     end
+
     if opts[:trigger] && !Badge::Trigger.is_none?(opts[:trigger])
       raise "Contract violation:\nQuery is triggered, but does not reference the ':backfill' parameter.\n(Hint: if :backfill is TRUE, you should ignore the :post_ids/:user_ids)" unless sql.match(/:backfill/)
     end
@@ -156,6 +280,7 @@ class BadgeGranter
     if opts[:target_posts]
       raise "Contract violation:\nQuery targets posts, but does not return a 'post_id' column" unless sql.match(/post_id/)
     end
+
     raise "Contract violation:\nQuery does not return a 'user_id' column" unless sql.match(/user_id/)
     raise "Contract violation:\nQuery does not return a 'granted_at' column" unless sql.match(/granted_at/)
     raise "Contract violation:\nQuery ends with a semicolon. Remove the semicolon; your sql will be used in a subquery." if sql.match(/;\s*\z/)
@@ -166,162 +291,233 @@ class BadgeGranter
   #   :trigger - the Badge::Trigger id
   #   :explain - return the EXPLAIN query
   def self.preview(sql, opts = {})
-    params = {user_ids: [], post_ids: [], backfill: true}
+    params = { user_ids: [], post_ids: [], backfill: true }
 
     BadgeGranter.contract_checks!(sql, opts)
 
     # hack to allow for params, otherwise sanitizer will trigger sprintf
-    count_sql = "SELECT COUNT(*) count FROM (#{sql}) q WHERE :backfill = :backfill"
-    grant_count = SqlBuilder.map_exec(OpenStruct, count_sql, params).first.count.to_i
+    count_sql = <<~SQL
+      SELECT COUNT(*) count
+                 FROM (
+                        #{sql}
+                      ) q
+                WHERE :backfill = :backfill
+    SQL
+    grant_count = DB.query_single(count_sql, params).first.to_i
 
-    grants_sql =
-     if opts[:target_posts]
-      "SELECT u.id, u.username, q.post_id, t.title, q.granted_at
-    FROM(#{sql}) q
-    JOIN users u on u.id = q.user_id
-    LEFT JOIN badge_posts p on p.id = q.post_id
-    LEFT JOIN topics t on t.id = p.topic_id
-    WHERE :backfill = :backfill
-    LIMIT 10"
-     else
-      "SELECT u.id, u.username, q.granted_at
-    FROM(#{sql}) q
-    JOIN users u on u.id = q.user_id
-    WHERE :backfill = :backfill
-    LIMIT 10"
-     end
+    grants_sql = if opts[:target_posts]
+      <<~SQL
+        SELECT u.id, u.username, q.post_id, t.title, q.granted_at
+          FROM (
+                 #{sql}
+               ) q
+          JOIN users u on u.id = q.user_id
+     LEFT JOIN badge_posts p on p.id = q.post_id
+     LEFT JOIN topics t on t.id = p.topic_id
+         WHERE :backfill = :backfill
+         LIMIT 10
+      SQL
+    else
+      <<~SQL
+        SELECT u.id, u.username, q.granted_at
+         FROM (
+                #{sql}
+              ) q
+         JOIN users u on u.id = q.user_id
+        WHERE :backfill = :backfill
+        LIMIT 10
+      SQL
+    end
 
     query_plan = nil
-    # HACK: active record is weird, force it to go down the sanitization path that cares not for % stuff
-    query_plan = ActiveRecord::Base.exec_sql("EXPLAIN #{sql} /*:backfill*/", params) if opts[:explain]
+    # HACK: active record sanitization too flexible, force it to go down the sanitization path that cares not for % stuff
+    # note mini_sql uses AR sanitizer at the moment (review if changed)
+    query_plan = DB.query_hash("EXPLAIN #{sql} /*:backfill*/", params) if opts[:explain]
 
-    sample = SqlBuilder.map_exec(OpenStruct, grants_sql, params).map(&:to_h)
+    sample = DB.query(grants_sql, params)
 
     sample.each do |result|
-      raise "Query returned a non-existent user ID:\n#{result[:id]}" unless User.find(result[:id]).present?
-      raise "Query did not return a badge grant time\n(Try using 'current_timestamp granted_at')" unless result[:granted_at]
+      raise "Query returned a non-existent user ID:\n#{result.id}" unless User.exists?(id: result.id)
+      raise "Query did not return a badge grant time\n(Try using 'current_timestamp granted_at')" unless result.granted_at
       if opts[:target_posts]
-        raise "Query did not return a post ID" unless result[:post_id]
-        raise "Query returned a non-existent post ID:\n#{result[:post_id]}" unless Post.find(result[:post_id]).present?
+        raise "Query did not return a post ID" unless result.post_id
+        raise "Query returned a non-existent post ID:\n#{result.post_id}" unless Post.exists?(result.post_id).present?
       end
     end
 
-    {grant_count: grant_count, sample: sample, query_plan: query_plan}
+    { grant_count: grant_count, sample: sample, query_plan: query_plan }
   rescue => e
-    {errors: e.message}
+    { errors: e.message }
   end
 
-  MAX_ITEMS_FOR_DELTA = 200
-  def self.backfill(badge, opts=nil)
+  MAX_ITEMS_FOR_DELTA ||= 200
+  def self.backfill(badge, opts = nil)
     return unless SiteSetting.enable_badges
-    return unless badge.query.present? && badge.enabled
+    return unless badge.enabled
+    return unless badge.query.present?
 
     post_ids = user_ids = nil
-
     post_ids = opts[:post_ids] if opts
     user_ids = opts[:user_ids] if opts
 
     # safeguard fall back to full backfill if more than 200
-    if (post_ids && post_ids.length > MAX_ITEMS_FOR_DELTA) ||
-       (user_ids && user_ids.length > MAX_ITEMS_FOR_DELTA)
+    if (post_ids && post_ids.size > MAX_ITEMS_FOR_DELTA) ||
+       (user_ids && user_ids.size > MAX_ITEMS_FOR_DELTA)
       post_ids = nil
       user_ids = nil
     end
 
-    post_ids = nil unless post_ids.present?
-    user_ids = nil unless user_ids.present?
+    post_ids = nil if post_ids.blank?
+    user_ids = nil if user_ids.blank?
 
     full_backfill = !user_ids && !post_ids
 
     post_clause = badge.target_posts ? "AND (q.post_id = ub.post_id OR NOT :multiple_grant)" : ""
     post_id_field = badge.target_posts ? "q.post_id" : "NULL"
 
-    sql = "DELETE FROM user_badges
-           WHERE id in (
-             SELECT ub.id
-             FROM user_badges ub
-             LEFT JOIN ( #{badge.query} ) q
-             ON q.user_id = ub.user_id
-              #{post_clause}
-             WHERE ub.badge_id = :id AND q.user_id IS NULL
-           )"
+    sql = <<~SQL
+      DELETE FROM user_badges
+        WHERE id IN (
+          SELECT ub.id
+          FROM user_badges ub
+          LEFT JOIN (
+            #{badge.query}
+          ) q ON q.user_id = ub.user_id
+          #{post_clause}
+          WHERE ub.badge_id = :id AND q.user_id IS NULL
+        )
+    SQL
 
-    Badge.exec_sql(sql, id: badge.id,
-                        post_ids: [-1],
-                        user_ids: [-2],
-                        backfill: true,
-                        multiple_grant: true # cheat here, cause we only run on backfill and are deleting
-                  ) if badge.auto_revoke && full_backfill
+    DB.exec(
+      sql,
+      id: badge.id,
+      post_ids: [-1],
+      user_ids: [-2],
+      backfill: true,
+      multiple_grant: true # cheat here, cause we only run on backfill and are deleting
+    ) if badge.auto_revoke && full_backfill
 
-    sql = "INSERT INTO user_badges(badge_id, user_id, granted_at, granted_by_id, post_id)
-            SELECT :id, q.user_id, q.granted_at, -1, #{post_id_field}
-            FROM ( #{badge.query} ) q
-            LEFT JOIN user_badges ub ON
-              ub.badge_id = :id AND ub.user_id = q.user_id
-              #{post_clause}
-            /*where*/
-            RETURNING id, user_id, granted_at
-            "
+    sql = <<~SQL
+      WITH w as (
+        INSERT INTO user_badges(badge_id, user_id, granted_at, granted_by_id, created_at, post_id)
+        SELECT :id, q.user_id, q.granted_at, -1, current_timestamp, #{post_id_field}
+          FROM (
+                 #{badge.query}
+               ) q
+     LEFT JOIN user_badges ub ON ub.badge_id = :id AND ub.user_id = q.user_id
+        #{post_clause}
+        /*where*/
+        ON CONFLICT DO NOTHING
+        RETURNING id, user_id, granted_at
+      )
+      SELECT w.*, username, locale, (u.admin OR u.moderator) AS staff, uo.skip_new_user_tips
+        FROM w
+        JOIN users u on u.id = w.user_id
+        JOIN user_options uo ON uo.user_id = w.user_id
+    SQL
 
-    builder = SqlBuilder.new(sql)
-    builder.where("ub.badge_id IS NULL AND q.user_id <> -1")
+    builder = DB.build(sql)
+    builder.where("ub.badge_id IS NULL AND q.user_id > 0")
 
     if (post_ids || user_ids) && !badge.query.include?(":backfill")
       Rails.logger.warn "Your triggered badge query for #{badge.name} does not include the :backfill param, skipping!"
       return
     end
 
-    if (post_ids && !badge.query.include?(":post_ids"))
+    if post_ids && !badge.query.include?(":post_ids")
       Rails.logger.warn "Your triggered badge query for #{badge.name} does not include the :post_ids param, skipping!"
       return
     end
 
-    if (user_ids && !badge.query.include?(":user_ids"))
+    if user_ids && !badge.query.include?(":user_ids")
       Rails.logger.warn "Your triggered badge query for #{badge.name} does not include the :user_ids param, skipping!"
       return
     end
 
-    builder.map_exec(OpenStruct, id: badge.id,
-                                 multiple_grant: badge.multiple_grant,
-                                 backfill: full_backfill,
-                                 post_ids: post_ids || [-2],
-                                 user_ids: user_ids || [-2]).each do |row|
+    builder.query(
+      id: badge.id,
+      multiple_grant: badge.multiple_grant,
+      backfill: full_backfill,
+      post_ids: post_ids || [-2],
+      user_ids: user_ids || [-2]).each do |row|
 
-      # old bronze badges do not matter
-      next if badge.badge_type_id == BadgeType::Bronze and row.granted_at < 2.days.ago
+      next if suppress_notification?(badge, row.granted_at, row.skip_new_user_tips)
+      next if row.staff && badge.awarded_for_trust_level?
 
-      notification = Notification.create!(
-                        user_id: row.user_id,
-                        notification_type: Notification.types[:granted_badge],
-                        data: { badge_id: badge.id, badge_name: badge.name }.to_json )
+      notification = send_notification(row.user_id, row.username, row.locale, badge)
 
-      Badge.exec_sql("UPDATE user_badges SET notification_id = :notification_id WHERE id = :id",
-                      notification_id: notification.id,
-                      id: row.id
-                    )
+      DB.exec(
+        "UPDATE user_badges SET notification_id = :notification_id WHERE id = :id",
+        notification_id: notification.id,
+        id: row.id
+      )
     end
 
     badge.reset_grant_count!
-
+  rescue => e
+    raise GrantError, "Failed to backfill '#{badge.name}' badge: #{opts}. Reason: #{e.message}"
   end
-
 
   def self.revoke_ungranted_titles!
-    Badge.exec_sql("UPDATE users SET title = ''
-                   WHERE NOT title IS NULL AND
-                         title <> '' AND
-                         EXISTS (
-                            SELECT 1
-                            FROM user_profiles
-                            WHERE user_id = users.id AND badge_granted_title
-                         ) AND
-                         title NOT IN (
-                            SELECT name
-                            FROM badges
-                            WHERE allow_title AND enabled AND
-                              badges.id IN (SELECT badge_id FROM user_badges ub where ub.user_id = users.id)
-                        )
-                   ")
+    DB.exec <<~SQL
+      UPDATE users u
+      SET title = ''
+      FROM user_profiles up
+      WHERE u.title IS NOT NULL
+        AND u.title <> ''
+        AND up.user_id = u.id
+        AND up.badge_granted_title
+        AND up.granted_title_badge_id IS NOT NULL
+        AND NOT EXISTS(
+          SELECT 1
+          FROM badges b
+                 JOIN user_badges ub ON ub.user_id = u.id AND ub.badge_id = b.id
+          WHERE b.id = up.granted_title_badge_id
+            AND b.allow_title
+            AND b.enabled
+        )
+    SQL
+
+    DB.exec <<~SQL
+      UPDATE user_profiles up
+      SET badge_granted_title    = FALSE,
+          granted_title_badge_id = NULL
+      FROM users u
+      WHERE up.user_id = u.id
+        AND (u.title IS NULL OR u.title = '')
+        AND (up.badge_granted_title OR up.granted_title_badge_id IS NOT NULL)
+    SQL
   end
 
+  def self.notification_locale(locale)
+    use_default_locale = !SiteSetting.allow_user_locale || locale.blank?
+    use_default_locale ? SiteSetting.default_locale : locale
+  end
+
+  def self.send_notification(user_id, username, locale, badge)
+    notification = I18n.with_locale(notification_locale(locale)) do
+      Notification.create!(
+        user_id: user_id,
+        notification_type: Notification.types[:granted_badge],
+        data: {
+          badge_id: badge.id,
+          badge_name: badge.display_name,
+          badge_slug: badge.slug,
+          badge_title: badge.allow_title,
+          username: username
+        }.to_json
+      )
+    end
+
+    DiscourseEvent.trigger(:user_badge_granted, badge, user_id)
+
+    notification
+  end
+
+  def self.suppress_notification?(badge, granted_at, skip_new_user_tips)
+    is_old_bronze_badge = badge.badge_type_id == BadgeType::Bronze && granted_at < 2.days.ago
+    skip_beginner_badge = skip_new_user_tips && badge.for_beginners?
+
+    is_old_bronze_badge || skip_beginner_badge
+  end
 end

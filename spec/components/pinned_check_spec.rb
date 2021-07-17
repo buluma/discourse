@@ -1,4 +1,6 @@
-require 'spec_helper'
+# frozen_string_literal: true
+
+require 'rails_helper'
 require 'pinned_check'
 
 describe PinnedCheck do
@@ -21,7 +23,6 @@ describe PinnedCheck do
 
   context "with a topic_user record" do
     let(:user) { Fabricate.build(:user) }
-    let(:unpinned_topic_user) { Fabricate.build(:topic_user, user: user, topic: unpinned_topic) }
 
     describe "unpinned topic" do
       let(:topic_user) { TopicUser.new(topic: unpinned_topic, user: user) }
@@ -50,8 +51,6 @@ describe PinnedCheck do
       end
     end
 
-
   end
 
 end
-

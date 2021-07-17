@@ -1,6 +1,7 @@
+# frozen_string_literal: true
 
 desc "invite an admin to this discourse instance"
-task "admin:invite", [:email] => [:environment] do |_,args|
+task "admin:invite", [:email] => [:environment] do |_, args|
   email = args[:email]
   if !email || email !~ /@/
     puts "ERROR: Expecting rake admin:invite[some@email.com]"
@@ -19,8 +20,11 @@ task "admin:invite", [:email] => [:environment] do |_,args|
 
   puts "Granting admin!"
   user.grant_admin!
-  user.change_trust_level!(4)
-  user.email_tokens.update_all  confirmed: true
+  if user.trust_level < 1
+    user.change_trust_level!(1)
+  end
+
+  user.email_tokens.update_all confirmed: true
 
   puts "Sending email!"
   email_token = user.email_tokens.create(email: user.email)
@@ -35,16 +39,19 @@ task "admin:create" => :environment do
     email = ask("Email:  ")
     existing_user = User.find_by_email(email)
 
-    # check if user account already exixts
+    # check if user account already exists
     if existing_user
       # user already exists, ask for password reset
       admin = existing_user
       reset_password = ask("User with this email already exists! Do you want to reset the password for this email? (Y/n)  ")
       if (reset_password == "" || reset_password.downcase == 'y')
         begin
-          password = ask("Password:  ") {|q| q.echo = false}
-          password_confirmation = ask("Repeat password:  ") {|q| q.echo = false}
-        end while password != password_confirmation
+          password = ask("Password:  ") { |q| q.echo = false }
+          password_confirmation = ask("Repeat password:  ") { |q| q.echo = false }
+          passwords_match = password == password_confirmation
+
+          say("Passwords don't match, try again...") unless passwords_match
+        end while !passwords_match
         admin.password = password
       end
     else
@@ -53,18 +60,27 @@ task "admin:create" => :environment do
       admin.email = email
       admin.username = UserNameSuggester.suggest(admin.email)
       begin
-        password = ask("Password:  ") {|q| q.echo = false}
-        password_confirmation = ask("Repeat password:  ") {|q| q.echo = false}
-      end while password != password_confirmation
+        if ENV["RANDOM_PASSWORD"] == "1"
+          password = password_confirmation = SecureRandom.hex
+        else
+          password = ask("Password:  ") { |q| q.echo = false }
+          password_confirmation = ask("Repeat password:  ") { |q| q.echo = false }
+        end
+
+        passwords_match = password == password_confirmation
+
+        say("Passwords don't match, try again...") unless passwords_match
+      end while !passwords_match
       admin.password = password
+    end
+
+    if SiteSetting.full_name_required && admin.name.blank?
+      admin.name = ask("Full name:  ")
     end
 
     # save/update user account
     saved = admin.save
-    if !saved
-      puts admin.errors.full_messages.join("\n")
-      next
-    end
+    say(admin.errors.full_messages.join("\n")) unless saved
   end while !saved
 
   say "\nEnsuring account is active!"
@@ -81,8 +97,10 @@ task "admin:create" => :environment do
   grant_admin = ask("Do you want to grant Admin privileges to this account? (Y/n)  ")
   if (grant_admin == "" || grant_admin.downcase == 'y')
     admin.grant_admin!
-    admin.change_trust_level!(4)
-    admin.email_tokens.update_all  confirmed: true
+    if admin.trust_level < 1
+      admin.change_trust_level!(1)
+    end
+    admin.email_tokens.update_all confirmed: true
     admin.activate
 
     say("\nYour account now has Admin privileges!")

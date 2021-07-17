@@ -1,26 +1,19 @@
-# encoding: utf-8
-#
-# Never edit this file. It will be overwritten when translations are pulled from Transifex.
+# WARNING: Never edit this file.
+# It will be overwritten when translations are pulled from Crowdin.
 #
 # To work with us on translations, join this project:
-# https://www.transifex.com/projects/p/discourse-org/
+# https://translate.discourse.org/
 
 nb_NO:
   js:
     poll:
       voters:
-        zero: "stemmer"
-        one: "har stemt"
-        other: "har stemt"
+        one: "stemmegiver"
+        other: "stemmegivere"
       total_votes:
-        zero: "stemmer totalt"
-        one: "stemmer totalt"
-        other: "stemmer totalt"
+        one: "antall stemmer"
+        other: "antall stemmer"
       average_rating: "Gjennomsnitt: <strong>%{average}</strong>."
-      multiple:
-        help:
-          up_to_max_options: "Du kan velge opptil <strong>%{count}</strong> alternativer."
-          between_min_and_max_options: "Du kan velge mellom <strong>%{min}</strong> og <strong>%{max}</strong> alternativer."
       cast-votes:
         title: "Stem nå"
         label: "Stem!"
@@ -29,14 +22,35 @@ nb_NO:
         label: "Vis resultat"
       hide-results:
         title: "Tilbake til dine stemmer"
-        label: "Skjul resultater"
+      export-results:
+        label: "Eksporter"
       open:
-        title: "Åpne avstemming"
+        title: "Åpne avstemning"
         label: "Åpne"
-        confirm: "Er du sikker på at du vil åpne avstemmingen?"
+        confirm: "Er du sikker på at du vil åpne denne avstemningen?"
       close:
-        title: "Lukk avstemming"
+        title: "Lukk avstemning"
         label: "Lukk"
-        confirm: "Er du sikker på at du vil lukke avstemmingen?"
-      error_while_toggling_status: "Det har oppstått en feil"
-      error_while_casting_votes: "Noe gikk galt"
+        confirm: "Er du sikker på at du vil lukke avstemningen?"
+      breakdown:
+        count: "Antall"
+      error_while_toggling_status: "Beklager, det oppstod en feil ved endring av status på denne avstemningen."
+      error_while_casting_votes: "Beklager, det oppstod en feil da du ga din stemme."
+      error_while_fetching_voters: "Beklager, det oppstod en feil når stemmegivere skulle vises."
+      ui_builder:
+        title: Lag avstemning.
+        insert: Sett inn avstemning
+        help:
+          invalid_values: Minimumsverdien må være mindre enn maksimumsverdien.
+          min_step_value: Minimal stegverdi er 1
+        poll_type:
+          label: Type
+          regular: Et valg
+          multiple: Flere valg
+          number: Nummervurdering
+        poll_config:
+          step: Steg
+        poll_public:
+          label: Vis hvem som har stemt
+        automatic_close:
+          label: Steng avstemningen automatisk

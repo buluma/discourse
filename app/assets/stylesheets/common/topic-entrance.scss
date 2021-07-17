@@ -1,26 +1,24 @@
 #topic-entrance {
-
-  border: 1px solid dark-light-diff($primary, $secondary, 90%, -60%);
+  border: 1px solid var(--primary-low);
   padding: 5px;
-  background: $secondary;
-  box-shadow: 0 0px 2px rgba(0,0,0, .2);
-  z-index: 100;
+  background: var(--secondary);
+  box-shadow: shadow("card");
+  z-index: z("dropdown");
 
   position: absolute;
   width: 133px;
-  padding: 5px;
-
   @include unselectable;
 
   button.full {
     width: 100%;
     margin-bottom: 5px;
+    flex-wrap: wrap;
 
-    i {
+    .d-icon {
       display: block;
-      margin-top: 2px;
-      margin-bottom: 2px;
-      font-size: 1.286em;
+      margin: 2px auto;
+      width: 100%;
+      transform: rotate(90deg);
     }
   }
   button.btn.jump-bottom {

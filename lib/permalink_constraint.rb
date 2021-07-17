@@ -1,7 +1,9 @@
+# frozen_string_literal: true
+
 class PermalinkConstraint
 
   def matches?(request)
-    Permalink.where(url: request.fullpath[1..-1]).exists?
+    Permalink.where(url: Permalink.normalize_url(request.fullpath)).exists?
   end
 
 end

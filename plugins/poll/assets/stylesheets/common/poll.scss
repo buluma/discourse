@@ -1,16 +1,9 @@
-$border-color: rgb(219,219,219);
-$text-color: #9E9E9E;
-
-$option-foreground: $primary;
-$option-background: dark-light-diff($primary, $secondary, 90%, -65%);
-$option-background-selected: #dbffdb;
-$option-shadow: dark-light-diff($option-background, $primary, 10%, -10%);
-
 div.poll {
+  margin: 1em 0;
+  border: 1px solid var(--primary-low);
 
-  border: 1px solid $border-color;
-
-  ul, ol {
+  ul,
+  ol {
     margin: 0;
     padding: 0;
     list-style: none;
@@ -20,109 +13,176 @@ div.poll {
 
   li {
     cursor: pointer;
-    font-size: 15px;
-    margin-bottom: 10px;
+    font-size: $font-up-1;
   }
 
   li[data-poll-option-id] {
-    color: $option-foreground;
-    background: $option-background;
-    box-shadow: inset 0 -6px rgba(0,0,0,.25), inset 0 0 0 100px rgba(0,0,0,0);
-    padding: .5em .7em .7em .5em;
-    border-radius: 4px;
-
-    &:hover {
-      box-shadow: inset 0 -6px rgba(0,0,0,.35), inset 0 0 0 100px rgba(0,0,0,.1);
-    }
-
-    &:active {
-      -webkit-transform: translate(0,2px);
-              transform: translate(0,2px);
-      box-shadow: inset 0 -4px rgba(0,0,0,.35), inset 0 0 0 100px rgba(0,0,0,.1);
-    }
-
-    &[data-poll-selected="selected"] {
-      background: $option-background-selected !important;
-    }
+    color: var(--primary);
+    padding: 0.5em 0;
+    word-break: break-word;
   }
 
-  .button {
-    display: inline-block;
-    padding: 6px 12px;
-    margin-right: 5px;
-    text-align: center;
-    cursor: pointer;
-    color: $primary;
-    background: dark-light-diff($primary, $secondary, 90%, -65%);
-
-    &:hover {
-      background: dark-light-diff($primary, $secondary, 65%, -75%);
-      color: #fff;
+  img {
+    // Hacky way to stop images without width/height
+    // from causing abrupt unintended scrolling
+    &:not([width]):not(.emoji),
+    &:not([height]):not(.emoji) {
+      width: 200px !important;
+      height: 200px !important;
+      object-fit: contain;
     }
   }
 
   .poll-info {
-    color: $text-color;
-    text-align: center;
+    color: var(--primary-medium);
     vertical-align: middle;
+    padding: 1em 0;
 
-    .info-number {
-      font-size: 3.5em;
+    .info-label {
+      font-size: $font-up-4;
+      line-height: $line-height-medium;
     }
 
     .info-text {
-      font-size: 1.7em;
+      margin: 0.25em 0;
+      display: block;
     }
   }
 
   .poll-container {
     vertical-align: middle;
-    padding: 10px;
+    padding: 0.5em 1em;
 
-    & > span {
-      font-size: 2em;
+    .poll-results-number-rating {
+      font-size: $font-up-5;
     }
   }
 
   .poll-buttons {
-    button {
-      float: none;
+    .info-text {
+      margin: 0.25em 0;
+      color: var(--primary-medium);
+    }
+    .info-text + .info-text,
+    button + .info-text {
+      margin-left: 0.5em;
+    }
+  }
+
+  .poll-voters:not(:empty) {
+    min-height: 30px;
+    margin-bottom: 0.25em;
+
+    li {
+      display: inline;
+    }
+  }
+
+  .poll-voters-toggle-expand {
+    width: 100%;
+    text-align: center;
+
+    .spinner {
+      margin-top: 0.25em;
     }
   }
 
   .results {
-
+    > li {
+      cursor: default;
+      padding: 0.25em 0;
+      &:last-child {
+        padding-bottom: 0;
+      }
+    }
     .option {
-      padding-bottom: 5px;
       p {
         margin: 0;
       }
     }
 
     .percentage {
-      font-size: 25px;
       float: right;
-      color: $text-color;
+      color: var(--primary-medium);
+      margin-left: 0.25em;
     }
 
     .bar-back {
-      background: $border-color;
+      background: var(--primary-low);
     }
 
     .bar {
-      height: 10px;
-      background: $option-foreground;
+      height: 0.75em;
+      background: var(--primary-medium);
     }
 
+    .chosen .bar {
+      background: var(--tertiary);
+    }
   }
 
   &[data-poll-type="number"] {
-
-    li {
+    li[data-poll-option-id] {
       display: inline-block;
-      margin: 0 12px 15px 5px;
+      width: 3.25em;
+      margin-right: 0.25em;
     }
-
   }
 
+  .pie-chart-legends {
+    text-align: center;
+    margin-top: 0.5em;
+
+    .legend {
+      display: inline-block;
+      margin: 4px 0 4px 14px;
+
+      .swatch {
+        display: inline-block;
+        width: 24px;
+        height: 12px;
+        margin-right: 4px;
+      }
+    }
+  }
+
+  .poll-grouped-pies-controls {
+    display: flex;
+    justify-content: space-between;
+  }
+
+  .poll-results-chart {
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+
+  .poll-show-breakdown {
+    margin-bottom: 0.25em;
+  }
+}
+
+div.poll.pie {
+  .poll-container {
+    display: inline-block;
+  }
+  .poll-info {
+    display: inline-block;
+    width: 150px;
+  }
+}
+
+// hides 0 vote count in crawler and print view
+body.crawler {
+  .poll {
+    .poll-info,
+    .poll-button {
+      display: none;
+    }
+  }
+}
+
+.poll-ui-builder {
+  .poll-date input {
+    height: 30px;
+  }
 }

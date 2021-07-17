@@ -1,30 +1,29 @@
+# frozen_string_literal: true
+
 class ExportCsvController < ApplicationController
 
-  skip_before_filter :preload_json, :check_xhr, only: [:show]
+  skip_before_action :preload_json, :check_xhr, only: [:show]
 
   def export_entity
-    params.require(:entity)
-    params.require(:entity_type)
-    guardian.ensure_can_export_entity!(params[:entity_type])
+    guardian.ensure_can_export_entity!(export_params[:entity])
 
-    Jobs.enqueue(:export_csv_file, entity: params[:entity], user_id: current_user.id)
+    if export_params[:entity] == 'user_archive'
+      Jobs.enqueue(:export_user_archive, user_id: current_user.id, args: export_params[:args])
+    else
+      Jobs.enqueue(:export_csv_file, entity: export_params[:entity], user_id: current_user.id, args: export_params[:args])
+    end
+    StaffActionLogger.new(current_user).log_entity_export(export_params[:entity])
     render json: success_json
+  rescue Discourse::InvalidAccess
+    render_json_error I18n.t("csv_export.rate_limit_error")
   end
 
-  # download
-  def show
-    params.require(:id)
-    filename = params.fetch(:id)
-    export_id = filename.split('-')[-1].split('.')[0]
-    export_initiated_by_user_id = 0
-    export_initiated_by_user_id = UserExport.where(id: export_id)[0].user_id unless UserExport.where(id: export_id).empty?
-    export_csv_path = UserExport.get_download_path(filename)
+  private
 
-    if export_csv_path && current_user.present? && export_initiated_by_user_id == current_user.id
-      send_file export_csv_path
-    else
-      render nothing: true, status: 404
+  def export_params
+    @_export_params ||= begin
+      params.require(:entity)
+      params.permit(:entity, args: Report::FILTERS).to_h
     end
   end
-
 end

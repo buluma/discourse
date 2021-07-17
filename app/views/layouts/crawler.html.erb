@@ -1,42 +1,77 @@
 <!DOCTYPE html>
-<html lang="<%= SiteSetting.default_locale %>">
+<html lang="<%= html_lang %>">
   <head>
     <meta charset="utf-8">
-    <title><%= content_for?(:title) ? yield(:title) + ' - ' + SiteSetting.title : SiteSetting.title %></title>
+    <title><%= content_for?(:title) ? yield(:title) : SiteSetting.title %></title>
     <meta name="description" content="<%= @description_meta || SiteSetting.site_description %>">
     <%= render partial: "layouts/head" %>
-    <%- unless customization_disabled? %>
-      <%= raw SiteCustomization.custom_head_tag(session[:preview_style]) %>
+    <%- if rtl? %>
+      <%= discourse_stylesheet_link_tag(mobile_view? ? :mobile_rtl : :desktop_rtl) %>
+    <%- else %>
+      <%= discourse_stylesheet_link_tag(mobile_view? ? :mobile : :desktop) %>
     <%- end %>
+    <%- if theme_id.present? %>
+      <%= discourse_stylesheet_link_tag(mobile_view? ? :mobile_theme : :desktop_theme) %>
+    <%- end %>
+    <%= theme_lookup("head_tag") %>
     <%= render_google_universal_analytics_code %>
     <%= yield :head %>
-    <style>
-        img { max-width: 100%; width: auto; height: auto; }
-    </style>
+    <% if show_browser_update? %>
+      <style>.buorg {position:absolute; z-index:111111; width:100%; top:0px; left:0px; background:#FDF2AB; text-align:left; font-family: sans-serif; color:#000; font-size: 14px;} .buorg div {padding: 8px;} .buorg a, .buorg a:visited {color:#E25600; text-decoration: underline;} @media print { .buorg { display: none !important; } }</style>
+    <% end %>
+    <%= build_plugin_html 'server:before-head-close-crawler' %>
   </head>
-  <body>
-    <%- unless customization_disabled? %>
-      <%= SiteCustomization.custom_header(session[:preview_style]) %>
-    <%- end %>
+  <body class="crawler">
+    <%= theme_lookup("header") %>
     <header>
-      <a href="<%= path "/" %>"><img src="<%=SiteSetting.logo_url%>" alt="<%=SiteSetting.title%>" id="site-logo"></a>
+      <a href="<%= path "/" %>">
+        <%- if SiteSetting.site_logo_url.present? %>
+          <img src="<%=SiteSetting.site_logo_url%>" alt="<%=SiteSetting.title%>" id="site-logo" style="max-width: 150px;">
+        <%- else %>
+          <h1><%=SiteSetting.title%></h1>
+        <% end %>
+      </a>
     </header>
-    <div id="main-outlet" class="container">
+    <div id="main-outlet" class="wrap">
       <%= yield %>
     </div>
-    <footer class="container">
-      <nav itemscope itemtype='http://schema.org/SiteNavigationElement'>
-        <a href='<%= path "/" %>'><%= t 'home_title' %></a>
-        <%= link_to t('js.filters.categories.title'), main_app.categories_path %>
-        <%= link_to t('guidelines_topic.title'), main_app.guidelines_path %>
-        <%= link_to t('tos_topic.title'), main_app.tos_path %>
-        <%= link_to t('privacy_topic.title'), main_app.privacy_path %>
+    <footer class="container wrap">
+      <nav class='crawler-nav'>
+        <ul>
+        <li itemscope itemtype='http://schema.org/SiteNavigationElement'>
+          <span itemprop='name'>
+            <a href='<%= path "/" %>' itemprop="url"><%= t 'home_title' %> </a>
+          </span>
+        </li>
+        <li itemscope itemtype='http://schema.org/SiteNavigationElement'>
+          <span itemprop='name'>
+            <a href='<%= path "/categories" %>' itemprop="url"><%= t 'js.filters.categories.title' %> </a>
+          </span>
+        </li>
+        <li itemscope itemtype='http://schema.org/SiteNavigationElement'>
+          <span itemprop='name'>
+            <a href='<%= path "/guidelines" %>' itemprop="url"><%= t 'guidelines_topic.title' %> </a>
+          </span>
+        </li>
+        <li itemscope itemtype='http://schema.org/SiteNavigationElement'>
+          <span itemprop='name'>
+            <a href='<%= path "/tos" %>' itemprop="url"><%= t 'tos_topic.title' %> </a>
+          </span>
+        </li>
+        <li itemscope itemtype='http://schema.org/SiteNavigationElement'>
+          <span itemprop='name'>
+            <a href='<%= path "/privacy" %>' itemprop="url"><%= t 'privacy_topic.title' %> </a>
+          </span>
+        </li>
+        </ul>
       </nav>
-      <p><%= t 'powered_by_html' %></p>
+      <p class='powered-by-link'><%= t 'powered_by_html' %></p>
     </footer>
-    <%= render_google_analytics_code %>
-    <%- unless customization_disabled? %>
-      <%= raw SiteCustomization.custom_body_tag(session[:preview_style]) %>
-    <%- end %>
+    <%= theme_lookup("footer") %>
+    <%= theme_lookup("body_tag") %>
+    <% if show_browser_update? %>
+      <div class="buorg"><div><%= I18n.t("js.browser_update").html_safe %></div></div>
+    <% end %>
   </body>
+  <%= yield :after_body %>
 </html>

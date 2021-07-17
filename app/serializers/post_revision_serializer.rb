@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class PostRevisionSerializer < ApplicationSerializer
 
   attributes :created_at,
@@ -22,8 +24,10 @@ class PostRevisionSerializer < ApplicationSerializer
              :edit_reason,
              :body_changes,
              :title_changes,
-             :user_changes
-
+             :user_changes,
+             :tags_changes,
+             :wiki,
+             :can_edit
 
   # Creates a field called field_name_changes with previous and
   # current members if a field has changed in this revision
@@ -56,8 +60,8 @@ class PostRevisionSerializer < ApplicationSerializer
 
   def previous_revision
     @previous_revision ||= revisions.select { |r| r["revision"] >= first_revision }
-                                    .select { |r| r["revision"] < current_revision }
-                                    .last.try(:[], "revision")
+      .select { |r| r["revision"] < current_revision }
+      .last.try(:[], "revision")
   end
 
   def current_revision
@@ -66,8 +70,8 @@ class PostRevisionSerializer < ApplicationSerializer
 
   def next_revision
     @next_revision ||= revisions.select { |r| r["revision"] <= last_revision }
-                                .select { |r| r["revision"] > current_revision }
-                                .first.try(:[], "revision")
+      .select { |r| r["revision"] > current_revision }
+      .first.try(:[], "revision")
   end
 
   def last_revision
@@ -92,6 +96,14 @@ class PostRevisionSerializer < ApplicationSerializer
 
   def avatar_template
     user.avatar_template
+  end
+
+  def wiki
+    object.post.wiki
+  end
+
+  def can_edit
+    scope.can_edit?(object.post)
   end
 
   def edit_reason
@@ -149,86 +161,115 @@ class PostRevisionSerializer < ApplicationSerializer
     }
   end
 
+  def tags_changes
+    changes = {
+      previous: filter_visible_tags(previous["tags"]),
+      current: filter_visible_tags(current["tags"])
+    }
+    changes[:previous] == changes[:current] ? nil : changes
+  end
+
+  def include_tags_changes?
+    scope.can_see_tags?(topic) && previous["tags"] != current["tags"]
+  end
+
   protected
 
-    def post
-      @post ||= object.post
+  def post
+    @post ||= object.post
+  end
+
+  def topic
+    @topic ||= object.post.topic
+  end
+
+  def revisions
+    @revisions ||= all_revisions.select { |r| scope.can_view_hidden_post_revisions? || !r["hidden"] }
+  end
+
+  def all_revisions
+    return @all_revisions if @all_revisions
+
+    post_revisions = PostRevision
+      .where(post_id: object.post_id)
+      .order(number: :desc)
+      .limit(99)
+      .to_a
+      .reverse
+
+    latest_modifications = {
+      "raw" => [post.raw],
+      "cooked" => [post.cooked],
+      "edit_reason" => [post.edit_reason],
+      "wiki" => [post.wiki],
+      "post_type" => [post.post_type],
+      "user_id" => [post.user_id]
+    }
+
+    # Retrieve any `tracked_topic_fields`
+    PostRevisor.tracked_topic_fields.each_key do |field|
+      if topic.respond_to?(field)
+        latest_modifications[field.to_s] = [topic.public_send(field)]
+      end
     end
 
-    def topic
-      @topic ||= object.post.topic
-    end
+    latest_modifications["featured_link"] = [post.topic.featured_link] if SiteSetting.topic_featured_link_enabled
+    latest_modifications["tags"] = [topic.tags.pluck(:name)] if scope.can_see_tags?(topic)
 
-    def revisions
-      @revisions ||= all_revisions.select { |r| scope.can_view_hidden_post_revisions? || !r["hidden"] }
-    end
+    post_revisions << PostRevision.new(
+      number: post_revisions.last.number + 1,
+      hidden: post.hidden,
+      modifications: latest_modifications
+    )
 
-    def all_revisions
-      return @all_revisions if @all_revisions
+    @all_revisions = []
 
-      post_revisions = PostRevision.where(post_id: object.post_id).order(:number).to_a
+    # backtrack
+    post_revisions.each do |pr|
+      revision = HashWithIndifferentAccess.new
+      revision[:revision] = pr.number
+      revision[:hidden] = pr.hidden
 
-      latest_modifications = {
-        "raw" => [post.raw],
-        "cooked" => [post.cooked],
-        "edit_reason" => [post.edit_reason],
-        "wiki" => [post.wiki],
-        "post_type" => [post.post_type],
-        "user_id" => [post.user_id]
-      }
-
-      # Retrieve any `tracked_topic_fields`
-      PostRevisor.tracked_topic_fields.each_key do |field|
-        if topic.respond_to?(field)
-          latest_modifications[field.to_s] = [topic.send(field)]
-        end
+      pr.modifications.each_key do |field|
+        revision[field] = pr.modifications[field][0]
       end
 
-      post_revisions << PostRevision.new(
-        number: post_revisions.last.number + 1,
-        hidden: post.hidden,
-        modifications: latest_modifications
-      )
+      @all_revisions << revision
+    end
 
-      @all_revisions = []
+    # waterfall
+    (@all_revisions.count - 1).downto(1).each do |r|
+      cur = @all_revisions[r]
+      prev = @all_revisions[r - 1]
 
-      # backtrack
-      post_revisions.each do |pr|
-        revision = HashWithIndifferentAccess.new
-        revision[:revision] = pr.number
-        revision[:hidden] = pr.hidden
-
-        pr.modifications.each_key do |field|
-          revision[field] = pr.modifications[field][0]
-        end
-
-        @all_revisions << revision
+      cur.each_key do |field|
+        prev[field] = prev.has_key?(field) ? prev[field] : cur[field]
       end
-
-      # waterfall
-      (@all_revisions.count - 1).downto(1).each do |r|
-        cur = @all_revisions[r]
-        prev = @all_revisions[r - 1]
-
-        cur.each_key do |field|
-          prev[field] = prev.has_key?(field) ? prev[field] : cur[field]
-        end
-      end
-
-      @all_revisions
     end
 
-    def previous
-      @previous ||= revisions.select { |r| r["revision"] <= current_revision }.last
-    end
+    @all_revisions
+  end
 
-    def current
-      @current ||= revisions.select { |r| r["revision"] > current_revision }.first
-    end
+  def previous
+    @previous ||= revisions.select { |r| r["revision"] <= current_revision }.last
+  end
 
-    def user
-      # if stuff goes pear shape attribute to system
-      object.user || Discourse.system_user
+  def current
+    @current ||= revisions.select { |r| r["revision"] > current_revision }.first
+  end
+
+  def user
+    # if stuff goes pear shape attribute to system
+    object.user || Discourse.system_user
+  end
+
+  def filter_visible_tags(tags)
+    if tags.is_a?(Array) && tags.size > 0
+      @hidden_tag_names ||= DiscourseTagging.hidden_tag_names(scope)
+      tags - @hidden_tag_names
+    else
+      tags
     end
+  end
 
 end

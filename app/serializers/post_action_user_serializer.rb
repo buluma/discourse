@@ -1,5 +1,9 @@
+# frozen_string_literal: true
+
 class PostActionUserSerializer < BasicUserSerializer
-  attributes :post_url
+  attributes :post_url,
+             :username_lower,
+             :unknown
 
   def id
     object.user.id
@@ -9,8 +13,8 @@ class PostActionUserSerializer < BasicUserSerializer
     object.user.username
   end
 
-  def uploaded_avatar_id
-    object.user.uploaded_avatar_id
+  def username_lower
+    object.user.username_lower
   end
 
   def avatar_template
@@ -19,6 +23,14 @@ class PostActionUserSerializer < BasicUserSerializer
 
   def post_url
     object.related_post.url if object.related_post_id && object.related_post
+  end
+
+  def unknown
+    true
+  end
+
+  def include_unknown?
+    (@options[:unknown_user_ids] || []).include?(object.user.id)
   end
 
 end

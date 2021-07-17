@@ -1,38 +1,8 @@
-require 'spec_helper'
-require_dependency 'site_setting'
-require_dependency 'site_setting_extension'
+# frozen_string_literal: true
+
+require 'rails_helper'
 
 describe SiteSetting do
-
-  describe "allows_embeddable_host" do
-    it 'works as expected' do
-      SiteSetting.embeddable_hosts = 'eviltrout.com'
-      expect(SiteSetting.allows_embeddable_host?('http://eviltrout.com')).to eq(true)
-      expect(SiteSetting.allows_embeddable_host?('https://eviltrout.com')).to eq(true)
-      expect(SiteSetting.allows_embeddable_host?('https://not-eviltrout.com')).to eq(false)
-    end
-
-    it 'works with a http host' do
-      SiteSetting.embeddable_hosts = 'http://eviltrout.com'
-      expect(SiteSetting.allows_embeddable_host?('http://eviltrout.com')).to eq(true)
-      expect(SiteSetting.allows_embeddable_host?('https://eviltrout.com')).to eq(true)
-      expect(SiteSetting.allows_embeddable_host?('https://not-eviltrout.com')).to eq(false)
-    end
-
-    it 'works with a https host' do
-      SiteSetting.embeddable_hosts = 'https://eviltrout.com'
-      expect(SiteSetting.allows_embeddable_host?('http://eviltrout.com')).to eq(true)
-      expect(SiteSetting.allows_embeddable_host?('https://eviltrout.com')).to eq(true)
-      expect(SiteSetting.allows_embeddable_host?('https://not-eviltrout.com')).to eq(false)
-    end
-
-    it 'works with multiple hosts' do
-      SiteSetting.embeddable_hosts = "https://eviltrout.com\nhttps://discourse.org"
-      expect(SiteSetting.allows_embeddable_host?('http://eviltrout.com')).to eq(true)
-      expect(SiteSetting.allows_embeddable_host?('http://discourse.org')).to eq(true)
-    end
-
-  end
 
   describe 'topic_title_length' do
     it 'returns a range of min/max topic title length' do
@@ -56,7 +26,7 @@ describe SiteSetting do
 
   describe 'private_message_title_length' do
     it 'returns a range of min/max pm topic title length' do
-      expect(SiteSetting.private_message_title_length).to eq(SiteSetting.defaults[:min_private_message_title_length]..SiteSetting.defaults[:max_topic_title_length])
+      expect(SiteSetting.private_message_title_length).to eq(SiteSetting.defaults[:min_personal_message_title_length]..SiteSetting.defaults[:max_topic_title_length])
     end
   end
 
@@ -82,7 +52,19 @@ describe SiteSetting do
   end
 
   describe "top_menu" do
-    before { SiteSetting.top_menu = 'one,-nope|two|three,-not|four,ignored|category/xyz|latest' }
+    describe "validations" do
+      it "always demands latest" do
+        expect do
+          SiteSetting.top_menu = 'categories'
+        end.to raise_error(Discourse::InvalidParameters)
+      end
+
+      it "does not allow random text" do
+        expect do
+          SiteSetting.top_menu = 'latest|random'
+        end.to raise_error(Discourse::InvalidParameters)
+      end
+    end
 
     describe "items" do
       let(:items) { SiteSetting.top_menu_items }
@@ -94,23 +76,132 @@ describe SiteSetting do
 
     describe "homepage" do
       it "has homepage" do
-        expect(SiteSetting.homepage).to eq('one')
+        SiteSetting.top_menu = "bookmarks|latest"
+        expect(SiteSetting.homepage).to eq('bookmarks')
       end
     end
   end
 
-  describe "scheme" do
+  describe "min_redirected_to_top_period" do
 
-    it "returns http when ssl is disabled" do
-      SiteSetting.use_https = false
-      expect(SiteSetting.scheme).to eq("http")
+    context "has_enough_top_topics" do
+
+      before do
+        SiteSetting.topics_per_period_in_top_page = 2
+        SiteSetting.top_page_default_timeframe = 'daily'
+
+        2.times do
+          TopTopic.create!(daily_score: 2.5)
+        end
+
+        TopTopic.refresh!
+      end
+
+      it "should_return_a_time_period" do
+        expect(SiteSetting.min_redirected_to_top_period(1.days.ago)).to eq(:daily)
+      end
+
     end
 
-    it "returns https when using ssl" do
-      SiteSetting.expects(:use_https).returns(true)
-      expect(SiteSetting.scheme).to eq("https")
+    context "does_not_have_enough_top_topics" do
+
+      before do
+        SiteSetting.topics_per_period_in_top_page = 20
+        SiteSetting.top_page_default_timeframe = 'daily'
+        TopTopic.refresh!
+      end
+
+      it "should_return_a_time_period" do
+        expect(SiteSetting.min_redirected_to_top_period(1.days.ago)).to eq(nil)
+      end
+
     end
 
   end
 
+  describe "scheme" do
+    before do
+      SiteSetting.force_https = true
+    end
+
+    it "returns http when ssl is disabled" do
+      SiteSetting.force_https = false
+      expect(SiteSetting.scheme).to eq("http")
+    end
+
+    it "returns https when using ssl" do
+      expect(SiteSetting.scheme).to eq("https")
+    end
+  end
+
+  context "shared_drafts_enabled?" do
+    it "returns false by default" do
+      expect(SiteSetting.shared_drafts_enabled?).to eq(false)
+    end
+
+    it "returns false when the category is uncategorized" do
+      SiteSetting.shared_drafts_category = SiteSetting.uncategorized_category_id
+      expect(SiteSetting.shared_drafts_enabled?).to eq(false)
+    end
+
+    it "returns true when the category is valid" do
+      SiteSetting.shared_drafts_category = Fabricate(:category).id
+      expect(SiteSetting.shared_drafts_enabled?).to eq(true)
+    end
+  end
+
+  context 'deprecated site settings' do
+    before do
+      SiteSetting.force_https = true
+      @orig_logger = Rails.logger
+      Rails.logger = @fake_logger = FakeLogger.new
+    end
+
+    after do
+      Rails.logger = @orig_logger
+    end
+
+    it 'should act as a proxy to the new methods' do
+      begin
+        original_settings = SiteSettings::DeprecatedSettings::SETTINGS.dup
+        SiteSettings::DeprecatedSettings::SETTINGS.clear
+
+        SiteSettings::DeprecatedSettings::SETTINGS.push([
+          'use_https', 'force_https', true, '0.0.1'
+        ])
+
+        SiteSetting.setup_deprecated_methods
+
+        expect do
+          expect(SiteSetting.use_https).to eq(true)
+          expect(SiteSetting.use_https?).to eq(true)
+        end.to change { @fake_logger.warnings.count }.by(2)
+
+        expect do
+          SiteSetting.use_https(warn: false)
+        end.to_not change { @fake_logger.warnings }
+
+        SiteSetting.use_https = false
+
+        expect(SiteSetting.force_https).to eq(false)
+        expect(SiteSetting.force_https?).to eq(false)
+      ensure
+        SiteSettings::DeprecatedSettings::SETTINGS.clear
+
+        SiteSettings::DeprecatedSettings::SETTINGS.concat(
+          original_settings
+        )
+      end
+    end
+  end
+
+  describe 'cached settings' do
+    it 'should recalculate cached setting when dependent settings are changed' do
+      SiteSetting.blocked_attachment_filenames = 'foo'
+      expect(SiteSetting.blocked_attachment_filenames_regex).to eq(/foo/)
+
+      SiteSetting.blocked_attachment_filenames = 'foo|bar'
+      expect(SiteSetting.blocked_attachment_filenames_regex).to eq(/foo|bar/)
+    end
+  end
 end

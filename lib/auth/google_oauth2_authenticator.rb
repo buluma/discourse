@@ -1,67 +1,42 @@
-class Auth::GoogleOAuth2Authenticator < Auth::Authenticator
+# frozen_string_literal: true
 
+class Auth::GoogleOAuth2Authenticator < Auth::ManagedAuthenticator
   def name
     "google_oauth2"
   end
 
-  def after_authenticate(auth_hash)
-    session_info = parse_hash(auth_hash)
-    google_hash = session_info[:google]
-
-    result = Auth::Result.new
-    result.email = session_info[:email]
-    result.email_valid = session_info[:email_valid]
-    result.name = session_info[:name]
-
-    result.extra_data = google_hash
-
-    user_info = GoogleUserInfo.find_by(google_user_id: google_hash[:google_user_id])
-    result.user = user_info.try(:user)
-
-    if !result.user && !result.email.blank? && result.user = User.find_by_email(result.email)
-      GoogleUserInfo.create({user_id: result.user.id}.merge(google_hash))
-    end
-
-    result
+  def enabled?
+    SiteSetting.enable_google_oauth2_logins
   end
 
-  def after_create_account(user, auth)
-    data = auth[:extra_data]
-    GoogleUserInfo.create({user_id: user.id}.merge(data))
+  def primary_email_verified?(auth_token)
+    # note, emails that come back from google via omniauth are always valid
+    # this protects against future regressions
+    auth_token[:extra][:raw_info][:email_verified]
   end
 
   def register_middleware(omniauth)
-    omniauth.provider :google_oauth2,
-           :setup => lambda { |env|
-              strategy = env["omniauth.strategy"]
-              strategy.options[:client_id] = SiteSetting.google_oauth2_client_id
-              strategy.options[:client_secret] = SiteSetting.google_oauth2_client_secret
-           }
-  end
+    options = {
+      setup: lambda { |env|
+        strategy = env["omniauth.strategy"]
+        strategy.options[:client_id] = SiteSetting.google_oauth2_client_id
+        strategy.options[:client_secret] = SiteSetting.google_oauth2_client_secret
 
-  protected
+        if (google_oauth2_hd = SiteSetting.google_oauth2_hd).present?
+          strategy.options[:hd] = google_oauth2_hd
+        end
 
-  def parse_hash(hash)
-    extra = hash[:extra][:raw_info]
+        if (google_oauth2_prompt = SiteSetting.google_oauth2_prompt).present?
+          strategy.options[:prompt] = google_oauth2_prompt.gsub("|", " ")
+        end
 
-    h = {}
-
-    h[:email] = hash[:info][:email]
-    h[:name] = hash[:info][:name]
-    h[:email_valid] = hash[:extra][:raw_info][:email_verified]
-
-    h[:google] = {
-      google_user_id: hash[:uid] || extra[:sub],
-      email: extra[:email],
-      first_name: extra[:given_name],
-      last_name: extra[:family_name],
-      gender: extra[:gender],
-      name: extra[:name],
-      link: extra[:hd],
-      profile_link: extra[:profile],
-      picture: extra[:picture]
+        # All the data we need for the `info` and `credentials` auth hash
+        # are obtained via the user info API, not the JWT. Using and verifying
+        # the JWT can fail due to clock skew, so let's skip it completely.
+        # https://github.com/zquestz/omniauth-google-oauth2/pull/392
+        strategy.options[:skip_jwt] = true
+      }
     }
-
-    h
+    omniauth.provider :google_oauth2, options
   end
 end
